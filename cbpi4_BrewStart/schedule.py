@@ -5,6 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
+try:
+    from .strings import DEFAULT_LANGUAGE, t
+except ImportError:  # pragma: no cover - direct import in tests
+    from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, t
+
 
 DATETIME_FORMATS = (
     "%Y-%m-%d %H:%M",
@@ -21,11 +26,11 @@ DATETIME_FORMATS = (
 TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H")
 
 
-def parse_time(value: str) -> Tuple[int, int, int]:
+def parse_time(value: str, language: str = DEFAULT_LANGUAGE) -> Tuple[int, int, int]:
     """Parse HH:MM[:SS] into (hour, minute, second)."""
     text = (value or "").strip()
     if not text:
-        raise ValueError("Startzeit fehlt (Format: HH:MM)")
+        raise ValueError(t("err_time_missing", language))
 
     for fmt in TIME_FORMATS:
         try:
@@ -33,24 +38,21 @@ def parse_time(value: str) -> Tuple[int, int, int]:
             return parsed.hour, parsed.minute, parsed.second
         except ValueError:
             continue
-    raise ValueError(f"Ungültige Startzeit '{value}' (erwartet HH:MM)")
+    raise ValueError(t("err_time_invalid", language, value=value))
 
 
-def parse_datetime(value: str) -> datetime:
+def parse_datetime(value: str, language: str = DEFAULT_LANGUAGE) -> datetime:
     """Parse a full date+time string."""
     text = (value or "").strip()
     if not text:
-        raise ValueError("Startzeitpunkt fehlt")
+        raise ValueError(t("err_datetime_missing", language))
 
     for fmt in DATETIME_FORMATS:
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
             continue
-    raise ValueError(
-        f"Ungültiger Startzeitpunkt '{value}' "
-        "(erwartet z.B. 2026-10-11 06:00 oder 11.10.2026 06:00)"
-    )
+    raise ValueError(t("err_datetime_invalid", language, value=value))
 
 
 def resolve_start(
@@ -58,6 +60,7 @@ def resolve_start(
     start_time: str,
     start_date: str = "",
     now: Optional[datetime] = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> datetime:
     """
     Resolve the absolute start datetime.
@@ -90,7 +93,7 @@ def resolve_start(
         if time_text and " " in time_text:
             return parse_datetime(time_text)
 
-        raise ValueError("DateTime-Modus benötigt Datum (YYYY-MM-DD) und Zeit (HH:MM)")
+        raise ValueError(t("err_datetime_needs_both", language))
 
     hour, minute, second = parse_time(start_time)
     candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
@@ -105,7 +108,7 @@ def resolve_start(
             candidate += timedelta(days=1)
         return candidate
 
-    raise ValueError(f"Unbekannter Modus '{mode}'")
+    raise ValueError(t("err_unknown_mode", language, mode=mode))
 
 
 def format_countdown(seconds: int) -> str:
