@@ -8,7 +8,7 @@ with open(path.join(this_directory, "README.md"), encoding="utf-8") as f:
 
 setup(
     name="cbpi4_BrewStart",
-    version="1.2.0",
+    version="1.2.0.post1",
     description="CraftBeerPi4: geplanter Braustart + Actor-Status für Mash/Boil/Whirlpool",
     author="CraftBeerPi Community",
     url="https://github.com/braubunker/cbpi4_BrewStart",
