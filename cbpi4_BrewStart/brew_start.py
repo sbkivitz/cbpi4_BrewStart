@@ -1,20 +1,30 @@
 import asyncio
 import logging
-from datetime import datetime
+import math
+import time
+from datetime import datetime, timedelta
 
 from cbpi.api import *
 from cbpi.api.dataclasses import NotificationAction, NotificationType
 from cbpi.api.step import CBPiStep, StepResult
-from cbpi.api.timer import Timer
 
 try:
-    from .schedule import format_countdown, format_start, resolve_start
+    from .schedule import (campden_tablets, format_countdown, format_start,
+                           format_tablets, format_temp, litres, plan_ready_by,
+                           resolve_start, volume_given, volume_label)
     from .strings import available_languages, normalise_language, t
 except ImportError:
-    from cbpi4_BrewStart.schedule import format_countdown, format_start, resolve_start
+    from cbpi4_BrewStart.schedule import (campden_tablets, format_countdown,
+                                          format_start, format_tablets,
+                                          format_temp, litres, plan_ready_by,
+                                          resolve_start, volume_given,
+                                          volume_label)
     from cbpi4_BrewStart.strings import available_languages, normalise_language, t
 
 logger = logging.getLogger(__name__)
+
+TIMING_START = "Start at"
+TIMING_READY = "Ready by"
 
 
 @parameters(
@@ -42,7 +52,108 @@ logger = logging.getLogger(__name__)
         Property.Text(
             label="StartTime",
             configurable=True,
-            description="Start time HH:MM / Startzeit (Today, Daily), e.g. 06:00",
+            description=(
+                "Start time HH:MM / Startzeit (Today, Daily), e.g. 06:00. "
+                "With Timing 'Ready by', the time the water must be ready / "
+                "mit 'Ready by' die Fertig-Zeit"
+            ),
+        ),
+        Property.Select(
+            label="Timing",
+            options=[TIMING_START, TIMING_READY],
+            description=(
+                "Start at: the next step starts at the time above. Ready by: "
+                "the water must be at Ready_Temp by then, and the step works "
+                "out when to start heating from the water's temperature, its "
+                "volume and the element's power. / Start at: der nächste Step "
+                "startet zur Zeit oben. Ready by: das Wasser soll dann "
+                "Ready_Temp haben; der Heizbeginn wird berechnet."
+            ),
+        ),
+        Property.Kettle(
+            label="Heat_Kettle",
+            description=(
+                "Ready by: the kettle with the heating element (on a HERMS, "
+                "the HLT). Its sensor gives its water's starting temperature. "
+                "/ Kessel mit dem Heizstab (HERMS: HLT)"
+            ),
+        ),
+        Property.Number(
+            label="Ready_Temp",
+            configurable=True,
+            description=(
+                "Ready by: the temperature the water must reach - on a HERMS "
+                "the strike temperature / Zieltemperatur des Wassers"
+            ),
+        ),
+        Property.Number(
+            label="Volume",
+            configurable=True,
+            description=(
+                "Ready by: the water in Heat_Kettle, in Volume_Unit / "
+                "Wassermenge im Heat_Kettle"
+            ),
+        ),
+        Property.Kettle(
+            label="Strike_Kettle",
+            description=(
+                "Ready by, optional: the mash tun, when its strike water is "
+                "heated by circulating it through a HERMS coil. Its sensor "
+                "gives the strike water's starting temperature. / optional: "
+                "Maischebottich, wenn das Einmaischwasser über die HERMS-"
+                "Spirale geheizt wird"
+            ),
+        ),
+        Property.Number(
+            label="Strike_Volume",
+            configurable=True,
+            description=(
+                "Ready by, optional: strike water in Strike_Kettle, in "
+                "Volume_Unit. Adds the time to heat it too. / optional: "
+                "Einmaischwasser"
+            ),
+        ),
+        Property.Select(
+            label="Volume_Unit",
+            options=["gal", "L"],
+            description=(
+                "Ready by: unit of Volume. Blank follows the temperature unit "
+                "(F: gal, C: L) / Einheit von Volume"
+            ),
+        ),
+        Property.Number(
+            label="Heater_Watts",
+            configurable=True,
+            description=(
+                "Ready by: the element's power in watts - measured, volts x "
+                "amps, if you can / Heizleistung in Watt"
+            ),
+        ),
+        Property.Number(
+            label="Efficiency_Pct",
+            configurable=True,
+            description=(
+                "Ready by: how much of the element's power ends up in the "
+                "water, in % (blank = 90, from a measured 20 gal HLT). Lower "
+                "it if heating took longer than planned. / Wirkungsgrad in %"
+            ),
+        ),
+        Property.Number(
+            label="Margin_Minutes",
+            configurable=True,
+            description=(
+                "Ready by: spare minutes added to the heat-up (blank = 10) / "
+                "Reserve in Minuten"
+            ),
+        ),
+        Property.Select(
+            label="Campden_Reminder",
+            options=["No", "Yes"],
+            description=(
+                "Remind me to treat the strike water with Campden, with the "
+                "dose for Strike_Volume (or Volume): 1 tablet per 20 gal / "
+                "75 L. / Erinnerung an Campden fürs Einmaischwasser"
+            ),
         ),
         Property.Number(
             label="NotifyBefore",
@@ -65,58 +176,229 @@ logger = logging.getLogger(__name__)
     ]
 )
 class BrewStart(CBPiStep):
-    """Wait until a configured start time, re-checking the wall clock as it goes.
+    """Wait until a configured time, judged against the wall clock, then hand on.
 
-    The countdown is a DISPLAY. The decision to fire is taken against the wall
-    clock, every tick, because the two are not the same thing.
+    Two ways to say when:
 
-    The original computed `target - datetime.now()` once in on_start() and
-    handed that many seconds to a Timer. Timer counts a pure duration and has
-    no idea what time it is, so anything that moved the system clock after the
-    step started moved the firing time by exactly as much, silently.
+    - Start at: the next step starts at the time given.
+    - Ready by: the water must be at Ready_Temp by the time given, and the
+      step works out when heating has to start - from the water's measured
+      temperature, the volumes and the element's power (schedule.py). The
+      plan is re-made once a minute, so water that cools overnight moves the
+      start earlier rather than leaving the water short.
 
-    That is not hypothetical on this hardware. A Raspberry Pi has no RTC: after
-    a power cut it boots with a wrong clock, CraftBeerPi autostarts, the step
-    resolves against that wrong `now()`, and NTP corrects the clock a minute
-    later. The countdown keeps running on the stale duration and the brew
-    starts hours off. The same arithmetic puts a wait that crosses a daylight
-    saving boundary out by an hour.
+    Why the step's own loop looks at the wall clock, with no countdown:
 
-    Re-resolving each tick makes both self-healing: the target is an absolute
-    local datetime, so after any clock correction the remaining time is simply
-    recomputed from it.
+    The first version computed `target - datetime.now()` once and handed that
+    many seconds to a Timer. A Timer counts a pure duration and has no idea
+    what time it is, so anything that moved the system clock moved the start
+    by as much, silently - and a Raspberry Pi has no RTC: after a power cut it
+    boots with a wrong clock, CraftBeerPi autostarts, the step resolves
+    against that wrong `now()`, and NTP corrects the clock a minute later. A
+    wait across a daylight saving change is out by an hour the same way.
+
+    The next version (this fork, 12 Oct) kept the Timer and rebuilt it
+    whenever it disagreed with the wall clock. The rebuild ran inside the old
+    Timer's own update, and a Timer cannot be stopped from inside itself:
+    stop() cancels the task and then awaits it, the await swallows the
+    cancellation, and the old countdown runs on - re-detecting the same drift
+    every second. Measured on 23 Oct with the real Timer: one 100 s clock
+    correction produced 24 "System clock changed" notifications, 8 "start
+    time reached", and a countdown still running after the step had finished.
+
+    So nothing is rebuilt. run() compares the target with the wall clock every
+    TICK_S and hands over when it is reached; a clock that jumps is reported
+    once, and the target - an absolute local datetime - is simply still right.
     """
 
-    #: How far the wall clock may disagree with the countdown before the timer
-    #: is rebuilt. Loose enough to ignore scheduling jitter and the rounding in
-    #: Timer's own one second tick, tight enough that an NTP step correction or
-    #: a daylight saving shift is caught on the next update.
+    #: How far the wall clock may move against the monotonic clock between two
+    #: looks before it counts as having been changed, and is reported. Loose
+    #: enough to ignore scheduling jitter, tight enough that an NTP step
+    #: correction or a daylight saving shift is caught on the next look.
     CLOCK_DRIFT_TOLERANCE_S = 60
+
+    #: How often the step looks at the clock.
+    TICK_S = 1.0
+
+    #: How often a "Ready by" plan is re-made from the water's temperature.
+    #: Overnight a kettle cools a few degrees, which moves the start by a few
+    #: minutes; once a minute keeps up with that without chasing sensor noise.
+    REPLAN_INTERVAL_S = 60
 
     async def NextStep(self, **kwargs):
         await self.next()
 
-    async def on_timer_done(self, timer):
-        self.summary = t("summary_reached", self.language)
+    # ----------------------------------------------------------- messages
+
+    def _unit(self):
+        return self.get_config_value("TEMP_UNIT", "C")
+
+    def _scheduled_message(self):
+        if self.plan is None:
+            return t("notify_scheduled", self.language,
+                     start=format_start(self.target_start))
+        unit = self._unit()
+        key = ("notify_ready_scheduled_strike" if self.plan.strike_minutes > 0
+               else "notify_ready_scheduled")
+        return t(key, self.language,
+                 ready=format_start(self.ready_at),
+                 start=format_start(self.target_start),
+                 water=format_temp(self.plan.water_temp, unit),
+                 target=format_temp(self.plan.target_temp, unit),
+                 heat=round(self.plan.heat_minutes),
+                 strike=round(self.plan.strike_minutes),
+                 margin=round(self.plan.margin_minutes))
+
+    def _due_message(self, now):
+        """What to say when the time has already come as the step starts."""
+        if self.plan is None:
+            return t("notify_already_passed", self.language,
+                     start=format_start(self.target_start))
+        eta = now + timedelta(minutes=self.plan.heat_minutes)
+        if eta <= self.ready_at:
+            # Due only because of the spare minutes: still on time.
+            return t("notify_ready_reached", self.language,
+                     ready=format_start(self.ready_at))
+        return t("notify_ready_late", self.language,
+                 water=format_temp(self.plan.water_temp, self._unit()),
+                 heat=round(self.plan.heat_minutes),
+                 eta=format_start(eta), ready=format_start(self.ready_at))
+
+    def _reached_message(self):
+        if self.plan is not None:
+            return t("notify_ready_reached", self.language,
+                     ready=format_start(self.ready_at))
+        return t("notify_reached_at", self.language,
+                 start=format_start(self.target_start))
+
+    def _offer_next(self, message, kind=NotificationType.INFO):
+        self.cbpi.notify(
+            self.name,
+            t("notify_next_step", self.language, message=message),
+            kind,
+            action=[NotificationAction(
+                t("action_next_step", self.language), self.NextStep)],
+        )
+
+    async def _arrive(self, message):
+        """The time has come: hand over, or wait for Next when AutoNext is No."""
+        self.arrived = True
+        self.summary = t("summary_ready_reached" if self.plan is not None
+                         else "summary_reached", self.language)
         await self.push_update()
-
-        if getattr(self, "target_start", None) is not None:
-            message = t("notify_reached_at", self.language,
-                        start=format_start(self.target_start))
-        else:
-            message = t("notify_reached", self.language)
-
         if self.auto_next:
             self.cbpi.notify(self.name, message, NotificationType.SUCCESS)
-            await self.next()
         else:
-            self.cbpi.notify(
-                self.name,
-                t("notify_next_step", self.language, message=message),
-                NotificationType.INFO,
-                action=[NotificationAction(
-                    t("action_next_step", self.language), self.NextStep)],
-            )
+            self._offer_next(message)
+
+    def _tell_no_reading(self):
+        heat = self._kettle("Heat_Kettle")
+        self.cbpi.notify(
+            self.name,
+            t("notify_ready_no_reading", self.language,
+              kettle=getattr(heat, "name", "?"),
+              assumed=format_temp(self.plan.water_temp, self._unit())),
+            NotificationType.WARNING,
+        )
+
+    def _campden(self):
+        """Remind, once, to treat the strike water - with the dose."""
+        if (self.props.get("Campden_Reminder", None) or "No") != "Yes":
+            return
+        volume = self.props.get("Strike_Volume", None)
+        if not volume_given(volume):
+            volume = self.props.get("Volume", None)
+        unit = self._unit()
+        volume_unit = self.props.get("Volume_Unit", None)
+        try:
+            water_l = litres(volume, volume_unit, unit, self.language)
+        except ValueError:
+            return  # no volume to dose for
+        self.cbpi.notify(
+            self.name,
+            t("notify_campden", self.language,
+              tablets=format_tablets(campden_tablets(water_l)),
+              volume=volume_label(volume, volume_unit, unit)),
+            NotificationType.INFO,
+        )
+
+    # ----------------------------------------------------------- planning
+
+    def _kettle(self, label):
+        kettle_id = self.props.get(label, None)
+        if not kettle_id:
+            return None
+        try:
+            return self.get_kettle(kettle_id)
+        except Exception:  # noqa: BLE001 - a deleted kettle is simply none
+            return None
+
+    def _water_temp(self, kettle):
+        """The kettle's current reading, or None when it cannot be trusted."""
+        sensor = getattr(kettle, "sensor", None) if kettle is not None else None
+        if not sensor:
+            return None
+        try:
+            reading = self.get_sensor_value(sensor)
+        except Exception:  # noqa: BLE001
+            return None
+        value = reading.get("value") if isinstance(reading, dict) else reading
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        if isinstance(reading, dict):
+            # This fork's server says how old a reading is and how old it may
+            # get. A probe that stopped answering keeps its last value, and
+            # planning from it would be planning from the past.
+            try:
+                age, limit = reading.get("age"), reading.get("max_age")
+                if age is not None and limit is not None and float(age) > float(limit):
+                    return None
+            except (TypeError, ValueError):
+                pass
+        return value
+
+    def _plan(self, ready_at):
+        heat = self._kettle("Heat_Kettle")
+        if heat is None or not getattr(heat, "sensor", None):
+            raise ValueError(t("err_ready_kettle", self.language))
+        return plan_ready_by(
+            ready_at,
+            self.props.get("Ready_Temp", None),
+            self.props.get("Heater_Watts", None),
+            self._unit(),
+            self.props.get("Volume", None),
+            self._water_temp(heat),
+            strike_volume=self.props.get("Strike_Volume", None),
+            strike_temp=self._water_temp(self._kettle("Strike_Kettle")),
+            volume_unit=self.props.get("Volume_Unit", None),
+            margin=self.props.get("Margin_Minutes", None),
+            efficiency=self.props.get("Efficiency_Pct", None),
+            language=self.language,
+        )
+
+    def _replan(self):
+        """Re-make the plan from the water as it is now."""
+        try:
+            plan = self._plan(self.ready_at)
+        except ValueError as exc:
+            logger.warning("BrewStart: keeping the earlier plan - %s", exc)
+            return
+        lost = plan.assumed and not self.plan.assumed
+        moved = (plan.start - self.target_start).total_seconds()
+        self.plan = plan
+        self.target_start = plan.start
+        if abs(moved) >= 60:
+            logger.info("BrewStart: heating start moved %+.0f min to %s (water %s)",
+                        moved / 60, format_start(plan.start),
+                        format_temp(plan.water_temp, self._unit()))
+        if lost:
+            self._tell_no_reading()
+
+    # ----------------------------------------------------------- the clock
 
     def wall_clock_remaining(self, now=None):
         """Seconds until the target, measured against the wall clock.
@@ -128,83 +410,69 @@ class BrewStart(CBPiStep):
         now = now or datetime.now()
         return int((self.target_start - now).total_seconds())
 
-    async def on_timer_update(self, timer, seconds):
-        try:
-            secs = int(seconds)
-        except (TypeError, ValueError):
-            secs = 0
-
-        # The countdown is a display. The wall clock decides.
-        actual = self.wall_clock_remaining()
-        if actual is not None:
-            drift = abs(actual - secs)
-            if drift > self.CLOCK_DRIFT_TOLERANCE_S:
-                # The system clock moved under us - NTP correcting a Pi that
-                # booted without an RTC, a daylight saving shift, or somebody
-                # setting the date. Rebuild the countdown from the target,
-                # which is an absolute datetime and therefore still correct.
-                logger.warning(
-                    "BrewStart: clock moved, countdown said %ss but %s is %ss "
-                    "away - rescheduling", secs, format_start(self.target_start),
-                    actual,
-                )
-                self.cbpi.notify(
-                    self.name,
-                    t("notify_clock_corrected", self.language,
-                      start=format_start(self.target_start),
-                      countdown=format_countdown(max(0, actual))),
-                    NotificationType.WARNING,
-                )
-                await self._rearm(actual)
-                return
-            secs = max(0, actual)
-
-        if getattr(self, "target_start", None) is not None:
-            self.summary = t(
-                "summary_waiting", self.language,
-                start=format_start(self.target_start),
-                countdown=format_countdown(secs),
-            )
-        else:
-            self.summary = Timer.format_time(secs)
-
-        # Vorwarnung / pre-warning
-        if (
-            getattr(self, "notify_before_seconds", 0) > 0
-            and not getattr(self, "pre_notified", False)
-            and 0 < secs <= self.notify_before_seconds
-        ):
-            self.pre_notified = True
-            self.cbpi.notify(
-                self.name,
-                t("notify_prewarn", self.language,
-                  countdown=format_countdown(secs)),
-                NotificationType.WARNING,
-            )
-
-        await self.push_update()
-
-    async def _rearm(self, remaining):
-        """Replace the countdown with one that matches the wall clock.
-
-        Fires immediately when the corrected clock says the moment has already
-        passed - a clock that jumps forwards past the target must not leave the
-        step waiting out a countdown for a time that is behind it.
-        """
-        old = getattr(self, "timer", None)
-        if old is not None:
-            try:
-                await old.stop()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("BrewStart rearm stop: %s", exc)
-        if remaining <= 0:
-            self.timer = Timer(1, on_update=self.on_timer_update,
-                               on_done=self.on_timer_done)
-            await self.on_timer_done(self.timer)
+    def _watch_clock(self, now, monotonic):
+        """Report, once, a system clock that has been changed."""
+        seen = getattr(self, "_clock_seen", None)
+        self._clock_seen = (now, monotonic)
+        if seen is None:
             return
-        self.timer = Timer(remaining, on_update=self.on_timer_update,
-                           on_done=self.on_timer_done)
-        self.timer.start()
+        jump = (now - seen[0]).total_seconds() - (monotonic - seen[1])
+        if abs(jump) <= self.CLOCK_DRIFT_TOLERANCE_S:
+            return
+        remaining = max(0, self.wall_clock_remaining(now))
+        logger.warning("BrewStart: the system clock moved %+.0fs; %s is %ss away",
+                       jump, format_start(self.target_start), remaining)
+        self.cbpi.notify(
+            self.name,
+            t("notify_clock_corrected", self.language,
+              start=format_start(self.target_start),
+              countdown=format_countdown(remaining)),
+            NotificationType.WARNING,
+        )
+
+    def _show(self, remaining):
+        if self.plan is not None:
+            water = ("?" if self.plan.assumed
+                     else format_temp(self.plan.water_temp, self._unit()))
+            self.summary = t("summary_ready_waiting", self.language,
+                             ready=format_start(self.ready_at),
+                             start=format_start(self.target_start),
+                             water=water, countdown=format_countdown(remaining))
+        else:
+            self.summary = t("summary_waiting", self.language,
+                             start=format_start(self.target_start),
+                             countdown=format_countdown(remaining))
+
+    def _prewarn(self, remaining):
+        if (self.notify_before_seconds > 0 and not self.pre_notified
+                and 0 < remaining <= self.notify_before_seconds):
+            self.pre_notified = True
+            key = "notify_prewarn_ready" if self.plan is not None else "notify_prewarn"
+            self.cbpi.notify(self.name,
+                             t(key, self.language,
+                               countdown=format_countdown(remaining)),
+                             NotificationType.WARNING)
+
+    async def _tick(self, now=None, monotonic=None):
+        """One look at the clock. True when the step should hand over."""
+        if self.arrived:
+            return self.auto_next
+        if self.target_start is None:
+            return False  # a configuration error: only Next moves on
+        now = now or datetime.now()
+        monotonic = time.monotonic() if monotonic is None else monotonic
+        self._watch_clock(now, monotonic)
+        if self.plan is not None and monotonic - self._planned_at >= self.REPLAN_INTERVAL_S:
+            self._planned_at = monotonic
+            self._replan()
+        remaining = self.wall_clock_remaining(now)
+        if remaining <= 0:
+            await self._arrive(self._reached_message())
+            return self.auto_next
+        self._show(remaining)
+        self._prewarn(remaining)
+        await self.push_update()
+        return False
 
     def _read_props(self):
         mode = self.props.get("Mode", None) or "Today"
@@ -232,107 +500,79 @@ class BrewStart(CBPiStep):
             notify_before = 15
 
         auto_next = (self.props.get("AutoNext", None) or "Yes") == "Yes"
+        self.ready_by = (self.props.get("Timing", None) or TIMING_START) == TIMING_READY
         return mode, start_time, start_date, max(0, notify_before), auto_next
 
     async def on_start(self):
+        self.timer = None
+        self._handover = None
+        self.arrived = False
         self.pre_notified = False
+        self.plan = None
+        self.ready_at = None
+        self.target_start = None
+        self._clock_seen = None
+        self._planned_at = time.monotonic()
         mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
         self.notify_before_seconds = notify_before * 60
 
         try:
-            self.target_start = resolve_start(
+            resolved = resolve_start(
                 mode=mode,
                 start_time=start_time,
                 start_date=start_date,
                 language=self.language,
             )
+            if self.ready_by:
+                self.plan = self._plan(resolved)
+                self.ready_at = resolved
+                self.target_start = self.plan.start
+            else:
+                self.target_start = resolved
         except ValueError as exc:
             logger.error("BrewStart config error: %s", exc)
+            self.plan = None
+            self.ready_at = None
+            self.target_start = None
             self.summary = t("error_prefix", self.language, error=exc)
             await self.push_update()
-            self.cbpi.notify(self.name, str(exc), NotificationType.ERROR)
-            # Kurzer Timer, dann stehen bleiben (kein Auto-Next bei Fehler)
-            self.auto_next = False
-            self.target_start = None
-            self.timer = Timer(1, on_update=self.on_timer_update, on_done=self.on_timer_done)
+            # Never starts by itself after a configuration error: one
+            # notification, with the way on.
+            self._offer_next(t("error_prefix", self.language, error=exc),
+                             NotificationType.ERROR)
             return
 
-        seconds = int((self.target_start - datetime.now()).total_seconds())
-        if seconds <= 0:
-            self.summary = t("summary_reached", self.language)
-            await self.push_update()
-            self.cbpi.notify(
-                self.name,
-                t("notify_already_passed", self.language,
-                  start=format_start(self.target_start)),
-                NotificationType.SUCCESS,
-            )
-            if self.auto_next:
-                await self.next()
-            else:
-                self.cbpi.notify(
-                    self.name,
-                    t("notify_next_step", self.language, message="").strip(),
-                    NotificationType.INFO,
-                    action=[NotificationAction(
-                        t("action_next_step", self.language), self.NextStep)],
-                )
-            self.timer = Timer(1, on_update=self.on_timer_update, on_done=self.on_timer_done)
+        self._campden()
+        if self.plan is not None and self.plan.assumed:
+            self._tell_no_reading()
+
+        now = datetime.now()
+        remaining = self.wall_clock_remaining(now)
+        if remaining <= 0:
+            await self._arrive(self._due_message(now))
             return
 
-        self.summary = t(
-            "summary_waiting", self.language,
-            start=format_start(self.target_start),
-            countdown=format_countdown(seconds),
-        )
-        self.cbpi.notify(
-            self.name,
-            t("notify_scheduled", self.language,
-              start=format_start(self.target_start)),
-            NotificationType.INFO,
-        )
+        self.cbpi.notify(self.name, self._scheduled_message(), NotificationType.INFO)
+        self._show(remaining)
         await self.push_update()
-
-        # Bewährtes CBPi-Muster (wie DatetimeWaitStep): ein Timer über die gesamte Wartezeit
-        self.timer = Timer(
-            seconds, on_update=self.on_timer_update, on_done=self.on_timer_done
-        )
-        self.timer.start()
-        logger.info(
-            "BrewStart waiting %s seconds until %s",
-            seconds,
-            format_start(self.target_start),
-        )
+        logger.info("BrewStart waiting %s seconds until %s",
+                    remaining, format_start(self.target_start))
 
     async def on_stop(self):
-        if getattr(self, "timer", None) is not None:
-            try:
-                await self.timer.stop()
-            except Exception as exc:
-                logger.warning("BrewStart timer stop: %s", exc)
         self.summary = ""
         await self.push_update()
 
     async def reset(self):
-        mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
-        self.notify_before_seconds = notify_before * 60
-        self.pre_notified = False
-        try:
-            self.target_start = resolve_start(
-                mode=mode, start_time=start_time, start_date=start_date,
-                language=self.language,
-            )
-            seconds = max(
-                1, int((self.target_start - datetime.now()).total_seconds())
-            )
-        except ValueError:
-            seconds = 1
-            self.target_start = None
-        self.timer = Timer(
-            seconds, on_update=self.on_timer_update, on_done=self.on_timer_done
-        )
+        self.summary = ""
 
     async def run(self):
         while self.running is True:
-            await asyncio.sleep(1)
+            if await self._tick() and getattr(self, "_handover", None) is None:
+                # Handed over the way every step is: next() from a task of its
+                # own, which cancels this one and reports NEXT. Returning from
+                # run() reports DONE, and StepController.done() acts only on
+                # NEXT and ERROR - the profile sat on a finished step for good,
+                # seen live on 23 Oct.
+                self._handover = asyncio.create_task(self.next())
+            await asyncio.sleep(self.TICK_S)
         return StepResult.DONE

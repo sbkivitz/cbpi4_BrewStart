@@ -38,9 +38,44 @@ Danach CraftBeerPi4 neu starten (`cbpi start` bzw. Service neu starten).
 |-----------|-----------|
 | **Mode** | `Today` = heute zur Uhrzeit (wenn schon vorbei → morgen). `DateTime` = festes Datum + Uhrzeit. `Daily` = nächste passende Uhrzeit. |
 | **StartDate** | Nur bei `DateTime`: z.B. `2026-10-11` oder komplett `2026-10-11 06:00` / `11.10.2026 06:00` |
-| **StartTime** | Uhrzeit als `HH:MM`, z.B. `06:00` |
+| **StartTime** | Uhrzeit als `HH:MM`, z.B. `06:00`. Mit `Timing = Ready by` die Fertig-Zeit |
+| **Timing** | `Start at` = der nächste Step startet zur Zeit oben (wie bisher). `Ready by` = das Wasser soll zur Zeit oben fertig sein; der Heizbeginn wird berechnet (siehe unten) |
 | **NotifyBefore** | Minuten vorher warnen (Standard gedanklich 15; `0` = aus) |
 | **AutoNext** | `Yes` = nach Erreichen der Zeit sofort weiter. `No` = Notification mit Button „Next Step“ |
+| **Campden_Reminder** | `Yes` = Erinnerung mit Dosis: 1 Campden-Tablette pro 20 gal / 75 L Einmaischwasser |
+
+### Ready by – Wasser zur Uhrzeit fertig
+
+Mit `Timing = Ready by` ist die Zeit oben der Zeitpunkt, an dem das Wasser
+`Ready_Temp` erreicht haben soll. Der Step misst die Wassertemperatur über die
+Sensoren der Kessel und rechnet zurück, wann geheizt werden muss – und plant
+jede Minute neu, damit Wasser, das über Nacht abkühlt, früher startet statt zu
+spät fertig zu sein.
+
+| Parameter | Bedeutung |
+|-----------|-----------|
+| **Heat_Kettle** | Kessel mit dem Heizstab (HERMS: HLT); sein Sensor liefert die Starttemperatur |
+| **Volume** | Wasser im Heat_Kettle |
+| **Strike_Kettle** | optional: Maischebottich, wenn das Einmaischwasser über die HERMS-Spirale geheizt wird |
+| **Strike_Volume** | optional: Einmaischwasser – dessen Aufheizzeit kommt hinzu |
+| **Ready_Temp** | Zieltemperatur (HERMS: Einmaischtemperatur) |
+| **Volume_Unit** | `gal` oder `L`; leer = nach Temperatureinheit (F: gal) |
+| **Heater_Watts** | Leistung des Heizstabs in Watt, am besten gemessen (Volt × Ampere) |
+| **Efficiency_Pct** | Anteil der Leistung, der im Wasser ankommt (leer = 90 %, an einem 20-gal-HLT gemessen). Kleiner machen, wenn das Aufheizen länger dauerte als geplant |
+| **Margin_Minutes** | Reserve in Minuten (leer = 10) |
+
+Ohne gültigen Messwert plant der Step, als hätte das Wasser 2 °C / 35.6 °F –
+also früher statt zu spät – und meldet es.
+
+**In English.** With `Timing = Ready by`, the time above is when the water
+must be at `Ready_Temp`. The step reads the water's temperature from the
+kettles' sensors and works back to when heating must start, from the volumes
+and the element's power: `Heat_Kettle` is the kettle with the element (the
+HLT on a HERMS) and `Volume` its water; `Strike_Kettle` and `Strike_Volume`
+add strike water heated through a HERMS coil. It re-plans every minute, so
+water that cools overnight starts earlier. With no usable reading it plans
+from 2 °C / 35.6 °F and says so. `Efficiency_Pct` (blank = 90, measured on a
+20 gal HLT) is the setting to calibrate after a test run.
 
 4. Brauprozess starten — der Step wartet und zeigt z.B.  
    `Start 11.10.2026 06:00 · noch 7h 12m 05s`
@@ -104,6 +139,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post2** – `Timing = Ready by`: Heizbeginn aus Wassertemperatur, Wassermenge und Heizleistung, mit Einmaischwasser über eine HERMS-Spirale; Campden-Erinnerung. Der Step prüft die Uhr selbst, ohne Timer-Neubau: eine Uhrkorrektur löste vorher jede Sekunde eine Meldung aus (24 Meldungen für eine Korrektur um 100 s) und ließ einen Countdown weiterlaufen.
 * **1.2.0** – Mash-/Boil-/Whirlpool-StatusActors + StepKind-Presets (Whirlpool auch per Step-Name)
 * **1.1.1** – BrewStart-Fix: Timer wie DatetimeWaitStep, robustere Props, keine kaputte cbpi-Dependency
 * **1.1.0** – `StepStatusActor`: aktiver Mash-/Rezept-Step als Actor-Status für DependentActor
