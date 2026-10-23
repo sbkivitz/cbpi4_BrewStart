@@ -50,11 +50,51 @@ MESSAGES = {
         "notify_scheduled": "Brew start scheduled for {start}",
         "notify_prewarn": "Brew start in {countdown}",
         "notify_clock_corrected": (
-            "System clock changed. Brew start re-scheduled for {start} "
+            "System clock changed. Brew start stays at {start} "
             "({countdown} to go)."
         ),
         "action_next_step": "Next Step",
         "error_prefix": "Error: {error}",
+        "err_ready_kettle": "Ready by needs a Kettle that has a sensor",
+        "err_ready_temp": (
+            "Ready by needs Ready_Temp - the temperature the water must reach"
+        ),
+        "err_ready_volume": "Ready by needs the water Volume (more than 0)",
+        "err_ready_watts": (
+            "Ready by needs Heater_Watts - the element's power (more than 0)"
+        ),
+        "summary_ready_waiting": (
+            "Ready {ready} · heating from {start} · water {water} · "
+            "{countdown} to go"
+        ),
+        "summary_ready_reached": "Heating start reached",
+        "notify_ready_scheduled": (
+            "Ready by {ready}: heating starts about {start}. {water} to "
+            "{target} takes about {heat} min, plus {margin} min spare."
+        ),
+        "notify_ready_no_reading": (
+            "No usable reading from {kettle} - planning as if the water were "
+            "at {assumed}, so heating starts early."
+        ),
+        "notify_ready_late": (
+            "Heating has to start now: from {water} it needs about {heat} min, "
+            "so the water will be ready around {eta}, after {ready}."
+        ),
+        "notify_ready_reached": (
+            "Time to heat - the water should be ready by {ready}."
+        ),
+        "notify_prewarn_ready": "Heating starts in {countdown}",
+        "notify_ready_scheduled_strike": (
+            "Ready by {ready}: heating starts about {start}. {water} to "
+            "{target} takes about {heat} min, {strike} of them for the strike "
+            "water, plus {margin} min spare."
+        ),
+        "notify_campden": (
+            "Strike water: {tablets} Campden tablet(s) for {volume} (1 per "
+            "20 gal / 75 L). It neutralizes chlorine and chloramine within "
+            "minutes and takes up dissolved oxygen, so add it once the water "
+            "is hot, just before doughing in."
+        ),
     },
     "de": {
         "err_time_missing": "Startzeit fehlt (Format: HH:MM)",
@@ -77,11 +117,53 @@ MESSAGES = {
         "notify_scheduled": "Braustart geplant für {start}",
         "notify_prewarn": "Braustart in {countdown}",
         "notify_clock_corrected": (
-            "Systemzeit geändert. Braustart neu geplant auf {start} "
+            "Systemzeit geändert. Braustart bleibt {start} "
             "(noch {countdown})."
         ),
         "action_next_step": "Nächster Step",
         "error_prefix": "Fehler: {error}",
+        "err_ready_kettle": "Ready by braucht einen Kessel (Kettle) mit Sensor",
+        "err_ready_temp": (
+            "Ready by braucht Ready_Temp - die Temperatur, die das Wasser "
+            "erreichen soll"
+        ),
+        "err_ready_volume": "Ready by braucht die Wassermenge Volume (größer 0)",
+        "err_ready_watts": (
+            "Ready by braucht Heater_Watts - die Leistung des Heizstabs "
+            "(größer 0)"
+        ),
+        "summary_ready_waiting": (
+            "Fertig {ready} · Heizen ab {start} · Wasser {water} · "
+            "noch {countdown}"
+        ),
+        "summary_ready_reached": "Heizbeginn erreicht",
+        "notify_ready_scheduled": (
+            "Fertig um {ready}: Heizbeginn ca. {start}. {water} auf {target} "
+            "dauert ca. {heat} min, plus {margin} min Reserve."
+        ),
+        "notify_ready_no_reading": (
+            "Kein gültiger Messwert von {kettle} - geplant, als hätte das "
+            "Wasser {assumed}; der Heizbeginn ist daher früher."
+        ),
+        "notify_ready_late": (
+            "Heizen muss jetzt beginnen: ab {water} dauert es ca. {heat} min, "
+            "das Wasser ist also gegen {eta} fertig, nach {ready}."
+        ),
+        "notify_ready_reached": (
+            "Heizbeginn erreicht - das Wasser soll um {ready} fertig sein."
+        ),
+        "notify_prewarn_ready": "Heizbeginn in {countdown}",
+        "notify_ready_scheduled_strike": (
+            "Fertig um {ready}: Heizbeginn ca. {start}. {water} auf {target} "
+            "dauert ca. {heat} min, davon {strike} für das Einmaischwasser, "
+            "plus {margin} min Reserve."
+        ),
+        "notify_campden": (
+            "Einmaischwasser: {tablets} Campden-Tablette(n) für {volume} "
+            "(1 pro 75 L / 20 gal). Sie neutralisiert Chlor und Chloramin in "
+            "wenigen Minuten und bindet gelösten Sauerstoff - darum erst ins "
+            "heiße Wasser, kurz vor dem Einmaischen."
+        ),
     },
 }
 
