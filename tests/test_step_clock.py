@@ -11,6 +11,11 @@ countdown runs on, re-detecting the same drift every second. Measured on
 23 Oct: one 100 s clock correction gave 24 "System clock changed"
 notifications, 8 "start time reached" and a countdown still running after the
 step had finished. That version, 6ef8098, is run here as the negative control.
+
+And in a simulation "the wall clock" is the simulation's: the server's one
+clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, 4f360ae, read the
+PC's clock there - planning on the PC's date and waiting real minutes for a
+start a few simulated minutes away - and is the control for that.
 """
 
 import asyncio
@@ -18,6 +23,7 @@ import importlib.util
 import subprocess
 import sys
 import tempfile
+import time
 import types
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -30,10 +36,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import cbpi4_BrewStart.brew_start as bs  # noqa: E402
+from cbpi.api import clock  # noqa: E402
 from cbpi.api.step import StepResult  # noqa: E402
 from cbpi4_BrewStart.schedule import plan_ready_by  # noqa: E402
 
 CONTROL = "6ef8098"
+POST2 = "4f360ae"
 REAL_DATETIME = datetime
 
 
@@ -285,13 +293,13 @@ def test_the_real_loop_survives_a_clock_correction(monkeypatch):
     assert leftovers == 0
 
 
-def load_control():
+def load_control(commit=CONTROL):
     try:
         source = subprocess.run(
-            ["git", "-C", str(ROOT), "show", f"{CONTROL}:cbpi4_BrewStart/brew_start.py"],
+            ["git", "-C", str(ROOT), "show", f"{commit}:cbpi4_BrewStart/brew_start.py"],
             capture_output=True, text=True, encoding="utf-8", check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        pytest.skip(f"git history with {CONTROL} not available")
+        pytest.skip(f"git history with {commit} not available")
     path = Path(tempfile.mkdtemp()) / "brew_start_control.py"
     path.write_text(source, encoding="utf-8")
     spec = importlib.util.spec_from_file_location("brew_start_control", path)
@@ -318,3 +326,162 @@ def test_control_returning_from_run_does_not_hand_over(monkeypatch):
     monkeypatch.setattr(bs.BrewStart, "run", returning_run)
     cbpi, done, leftovers = run_with_clock_correction(bs, monkeypatch, 3.5)
     assert done == [StepResult.DONE], done
+
+
+# ----------------------------------------------------------- the brewing clock
+#
+# Scott, of the simulator: "60x should give same results 60x faster." A
+# simulation runs the server's one clock (cbpi.api.clock) at SIM_TIME_SCALE, and
+# the water heats and every other step's timer counts by it.
+
+#: A day on the simulation's clock, weeks from the PC's - as on Scott's 8000 sim
+#: after a day at 60x, its charts stamped 18 Dec on 27 Oct.
+SIM_DAY = (REAL_DATETIME.now() + timedelta(days=52)).replace(
+    hour=17, minute=0, second=0, microsecond=0)
+TONIGHT = dict(HERMS, Mode="Today", StartDate="", StartTime="19:00")
+AN_HOUR_ON = {"StartDate": (SIM_DAY + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")}
+
+
+class HandClock(clock.TimeSource):
+    """A simulation's clock that the test moves by hand."""
+
+    rate = 60.0
+
+    def __init__(self, at):
+        self.t = at.timestamp()
+        self.m = 10_000.0
+
+    def now(self):
+        return self.t
+
+    def monotonic(self):
+        return self.m
+
+    def advance(self, seconds):
+        self.t += seconds
+        self.m += seconds
+
+    async def sleep(self, seconds):
+        await asyncio.sleep(0)
+
+
+@pytest.fixture
+def simulation():
+    """Run one test on a simulation's clock, and put the real one back."""
+    replaced = []
+
+    def install(source):
+        replaced.append(clock.set_source(source))
+        return source
+
+    yield install
+    if replaced:
+        clock.set_source(replaced[0])
+
+
+def look_for_an_hour(step, sim):
+    """Two simulated minutes a look, for an hour and a look more."""
+    async def go():
+        await step.on_start()
+        looks = []
+        for _ in range(31):
+            sim.advance(120)
+            looks.append(await step._tick())
+        return looks
+    return asyncio.run(go())
+
+
+def test_a_rig_asks_the_wall_clock_itself(monkeypatch):
+    """On a rig the brewing clock is real time, and nothing about the step changes."""
+    assert isinstance(clock.get_source(), clock.RealTimeSource)
+    monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
+    assert bs.brewing_now() == NIGHT
+    before = time.monotonic()
+    assert before <= bs.brewing_monotonic() <= time.monotonic()
+    monkeypatch.setattr(bs, "brewing_clock", None)  # upstream CraftBeerPi has none
+    assert bs.brewing_now() == NIGHT
+
+
+def test_ready_by_is_planned_on_the_simulations_clock(simulation):
+    simulation(HandClock(SIM_DAY))
+    step = step_with(TONIGHT, hlt_and_tun())
+    asyncio.run(step.on_start())
+    ready = SIM_DAY.replace(hour=19)
+    expected = plan_ready_by(ready, 163, 5346, "F", 15, 64.0, strike_volume=8,
+                             strike_temp=63.0, volume_unit="gal")
+    assert step.ready_at == ready
+    assert step.target_start == expected.start
+    assert step.wall_clock_remaining() == int((expected.start - SIM_DAY).total_seconds())
+
+
+def test_control_post2_plans_on_the_pcs_date(simulation):
+    simulation(HandClock(SIM_DAY))
+    step = step_with(TONIGHT, hlt_and_tun(), module=load_control(POST2))
+    asyncio.run(step.on_start())
+    assert step.ready_at.date() != SIM_DAY.date()
+
+
+def test_the_start_comes_when_the_simulations_clock_reaches_it(simulation):
+    sim = simulation(HandClock(SIM_DAY))
+    cbpi = Cbpi()
+    looks = look_for_an_hour(step_with(AN_HOUR_ON, cbpi), sim)
+    assert looks[:29] == [False] * 29
+    assert looks[29] is True
+    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+    assert not cbpi.said("System clock changed"), cbpi.notes
+
+
+def test_control_post2_never_reaches_a_simulated_start(simulation):
+    sim = simulation(HandClock(SIM_DAY))
+    looks = look_for_an_hour(step_with(AN_HOUR_ON, Cbpi(), module=load_control(POST2)), sim)
+    assert not any(looks)
+
+
+def test_control_half_a_clock_reports_a_change_at_every_look(simulation, monkeypatch):
+    """The time of day from the simulation, intervals from the PC: a flood."""
+    monkeypatch.setattr(bs, "brewing_monotonic", time.monotonic)
+    sim = simulation(HandClock(SIM_DAY))
+    cbpi = Cbpi()
+    look_for_an_hour(step_with(AN_HOUR_ON, cbpi), sim)
+    assert len(cbpi.said("System clock changed")) > 1, cbpi.notes
+
+
+def hand_over_at_60x(module, simulation, seconds=2.5):
+    """Start the step for real on a clock running 60x, 90 simulated seconds ahead.
+
+    Returns (result, simulated seconds after the start) for each hand-over.
+    """
+    sim = simulation(clock.ScaledTimeSource(60))
+    start = (REAL_DATETIME.fromtimestamp(sim.now())
+             + timedelta(seconds=90)).replace(microsecond=0)
+    props = {"Mode": "DateTime", "AutoNext": "Yes", "NotifyBefore": 0,
+             "Language": "English", "StartDate": start.strftime("%Y-%m-%d %H:%M:%S")}
+    handed = []
+    step = module.BrewStart(Cbpi(), "s1", "BrewStart", props,
+                            lambda s, r: handed.append((r, sim.now() - start.timestamp())))
+
+    async def go():
+        await step.start()
+        await asyncio.sleep(seconds)
+        before_cleanup = list(handed)  # cancelling a waiting step reports too
+        for task in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
+            task.cancel()
+        return before_cleanup
+
+    return asyncio.run(go())
+
+
+def test_the_real_loop_lands_on_the_start_at_60x(simulation):
+    handed = hand_over_at_60x(bs, simulation)
+    assert [r for r, _ in handed] == [StepResult.NEXT], handed
+    assert -1.5 <= handed[0][1] <= 5, f"{handed[0][1]:+.1f} simulated s from the start"
+
+
+def test_control_post2_is_still_waiting_at_60x(simulation):
+    assert hand_over_at_60x(load_control(POST2), simulation) == []
+
+
+def test_control_a_whole_look_late_without_the_short_last_pause(simulation, monkeypatch):
+    monkeypatch.setattr(bs.BrewStart, "_pause", lambda self: self.TICK_S)
+    handed = hand_over_at_60x(bs, simulation)
+    assert handed and handed[0][1] > 20, handed

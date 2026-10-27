@@ -67,6 +67,10 @@ spät fertig zu sein.
 Ohne gültigen Messwert plant der Step, als hätte das Wasser 2 °C / 35.6 °F –
 also früher statt zu spät – und meldet es.
 
+Im Simulator (cbpi4-simvessel, `SIM_TIME_SCALE`) gelten die Zeiten auf der Uhr
+der Simulation, nach der auch das Wasser heizt: bei 60× kommt der Heizbeginn
+60-mal so schnell.
+
 **In English.** With `Timing = Ready by`, the time above is when the water
 must be at `Ready_Temp`. The step reads the water's temperature from the
 kettles' sensors and works back to when heating must start, from the volumes
@@ -75,7 +79,9 @@ HLT on a HERMS) and `Volume` its water; `Strike_Kettle` and `Strike_Volume`
 add strike water heated through a HERMS coil. It re-plans every minute, so
 water that cools overnight starts earlier. With no usable reading it plans
 from 2 °C / 35.6 °F and says so. `Efficiency_Pct` (blank = 90, measured on a
-20 gal HLT) is the setting to calibrate after a test run.
+20 gal HLT) is the setting to calibrate after a test run. In a simulation
+(cbpi4-simvessel, `SIM_TIME_SCALE`) the times are on the simulation's clock,
+which the water heats by.
 
 4. Brauprozess starten — der Step wartet und zeigt z.B.  
    `Start 11.10.2026 06:00 · noch 7h 12m 05s`
@@ -139,6 +145,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post3** – Im Simulator folgt der Step der Uhr der Simulation (`SIM_TIME_SCALE`) statt der PC-Uhr. Vorher wartete er bei 60× echte Minuten auf einen Start, der simulierte Minuten entfernt war, und das Wasser war lange vor der Fertig-Zeit heiß. Am Rig ändert sich nichts: dort ist die Uhr der Simulation die echte.
 * **1.2.0.post2** – `Timing = Ready by`: Heizbeginn aus Wassertemperatur, Wassermenge und Heizleistung, mit Einmaischwasser über eine HERMS-Spirale; Campden-Erinnerung. Der Step prüft die Uhr selbst, ohne Timer-Neubau: eine Uhrkorrektur löste vorher jede Sekunde eine Meldung aus (24 Meldungen für eine Korrektur um 100 s) und ließ einen Countdown weiterlaufen.
 * **1.2.0** – Mash-/Boil-/Whirlpool-StatusActors + StepKind-Presets (Whirlpool auch per Step-Name)
 * **1.1.1** – BrewStart-Fix: Timer wie DatetimeWaitStep, robustere Props, keine kaputte cbpi-Dependency

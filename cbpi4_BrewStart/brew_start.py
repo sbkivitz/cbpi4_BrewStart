@@ -9,6 +9,11 @@ from cbpi.api.dataclasses import NotificationAction, NotificationType
 from cbpi.api.step import CBPiStep, StepResult
 
 try:
+    from cbpi.api import clock as brewing_clock
+except ImportError:  # upstream CraftBeerPi: the wall clock is the only clock
+    brewing_clock = None
+
+try:
     from .schedule import (campden_tablets, format_countdown, format_start,
                            format_tablets, format_temp, litres, plan_ready_by,
                            resolve_start, volume_given, volume_label)
@@ -25,6 +30,38 @@ logger = logging.getLogger(__name__)
 
 TIMING_START = "Start at"
 TIMING_READY = "Ready by"
+
+
+def _simulation_clock():
+    """The simulation's clock when one runs the server, else None.
+
+    This fork's server has one clock for everything that measures time
+    (cbpi.api.clock). On a rig its source is real time, and the step asks the
+    wall clock itself, as it always has. A simulation (cbpi4-simvessel) runs
+    that clock SIM_TIME_SCALE times as fast, and the water heats and every
+    other step's timer counts by it - so the step must read it too.
+    """
+    if brewing_clock is None:
+        return None
+    try:
+        source = brewing_clock.get_source()
+        if isinstance(source, brewing_clock.RealTimeSource):
+            return None
+    except AttributeError:  # a core whose clock predates sources: real time
+        return None
+    return source
+
+
+def brewing_now():
+    """The time of day on the clock the brew runs by."""
+    source = _simulation_clock()
+    return datetime.now() if source is None else datetime.fromtimestamp(source.now())
+
+
+def brewing_monotonic():
+    """Seconds for measuring intervals, on the same clock as brewing_now()."""
+    source = _simulation_clock()
+    return time.monotonic() if source is None else source.monotonic()
 
 
 @parameters(
@@ -209,6 +246,13 @@ class BrewStart(CBPiStep):
     So nothing is rebuilt. run() compares the target with the wall clock every
     TICK_S and hands over when it is reached; a clock that jumps is reported
     once, and the target - an absolute local datetime - is simply still right.
+
+    "The wall clock" is the clock the brew runs by: the PC's on a rig, the
+    simulation's in a simulation (brewing_now). Until 1.2.0.post3 the step
+    read the PC's clock in a simulation too. At SIM_TIME_SCALE 60 it waited
+    real minutes for a start a few simulated minutes away, while the water
+    heated by the simulation's clock - and was hot long before the time it
+    had been asked for.
     """
 
     #: How far the wall clock may move against the monotonic clock between two
@@ -407,7 +451,7 @@ class BrewStart(CBPiStep):
         """
         if getattr(self, "target_start", None) is None:
             return None
-        now = now or datetime.now()
+        now = now or brewing_now()
         return int((self.target_start - now).total_seconds())
 
     def _watch_clock(self, now, monotonic):
@@ -459,8 +503,8 @@ class BrewStart(CBPiStep):
             return self.auto_next
         if self.target_start is None:
             return False  # a configuration error: only Next moves on
-        now = now or datetime.now()
-        monotonic = time.monotonic() if monotonic is None else monotonic
+        now = now or brewing_now()
+        monotonic = brewing_monotonic() if monotonic is None else monotonic
         self._watch_clock(now, monotonic)
         if self.plan is not None and monotonic - self._planned_at >= self.REPLAN_INTERVAL_S:
             self._planned_at = monotonic
@@ -512,7 +556,7 @@ class BrewStart(CBPiStep):
         self.ready_at = None
         self.target_start = None
         self._clock_seen = None
-        self._planned_at = time.monotonic()
+        self._planned_at = brewing_monotonic()
         mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
         self.notify_before_seconds = notify_before * 60
 
@@ -521,6 +565,7 @@ class BrewStart(CBPiStep):
                 mode=mode,
                 start_time=start_time,
                 start_date=start_date,
+                now=brewing_now(),
                 language=self.language,
             )
             if self.ready_by:
@@ -546,7 +591,7 @@ class BrewStart(CBPiStep):
         if self.plan is not None and self.plan.assumed:
             self._tell_no_reading()
 
-        now = datetime.now()
+        now = brewing_now()
         remaining = self.wall_clock_remaining(now)
         if remaining <= 0:
             await self._arrive(self._due_message(now))
@@ -565,6 +610,22 @@ class BrewStart(CBPiStep):
     async def reset(self):
         self.summary = ""
 
+    def _pause(self):
+        """Real seconds until the next look at the clock.
+
+        Looking is a cadence: once a real second however fast the clock runs,
+        or a simulation would be flooded with updates. The start is an instant,
+        though, and a look a whole TICK_S late is SIM_TIME_SCALE seconds late in
+        brewing time - a simulated minute at 60x. So in a simulation the last
+        pause before the start ends at the start.
+        """
+        source = _simulation_clock()
+        remaining = self.wall_clock_remaining()
+        if source is None or remaining is None or self.arrived:
+            return self.TICK_S
+        rate = getattr(source, "rate", 1.0) or 1.0
+        return min(self.TICK_S, max(0.0, remaining / rate))
+
     async def run(self):
         while self.running is True:
             if await self._tick() and getattr(self, "_handover", None) is None:
@@ -574,5 +635,5 @@ class BrewStart(CBPiStep):
                 # NEXT and ERROR - the profile sat on a finished step for good,
                 # seen live on 23 Oct.
                 self._handover = asyncio.create_task(self.next())
-            await asyncio.sleep(self.TICK_S)
+            await asyncio.sleep(self._pause())
         return StepResult.DONE
