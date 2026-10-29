@@ -14,22 +14,135 @@ except ImportError:  # upstream CraftBeerPi: the wall clock is the only clock
     brewing_clock = None
 
 try:
-    from .schedule import (campden_tablets, format_countdown, format_start,
+    from .schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY, MODES,
+                           campden_tablets, format_countdown, format_start,
                            format_tablets, format_temp, litres, plan_ready_by,
-                           resolve_start, volume_given, volume_label)
-    from .strings import available_languages, normalise_language, t
+                           resolve_start, volume_label)
+    from .strings import DEFAULT_LANGUAGE, normalise_language, t
 except ImportError:
-    from cbpi4_BrewStart.schedule import (campden_tablets, format_countdown,
-                                          format_start, format_tablets,
-                                          format_temp, litres, plan_ready_by,
-                                          resolve_start, volume_given,
+    from cbpi4_BrewStart.schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY,
+                                          MODES, campden_tablets,
+                                          format_countdown, format_start,
+                                          format_tablets, format_temp, litres,
+                                          plan_ready_by, resolve_start,
                                           volume_label)
-    from cbpi4_BrewStart.strings import available_languages, normalise_language, t
+    from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, normalise_language, t
 
 logger = logging.getLogger(__name__)
 
 TIMING_START = "Start at"
 TIMING_READY = "Ready by"
+
+#: The server setting that picks the language of the step's form and messages.
+LANGUAGE_SETTING = "BREWSTART_LANGUAGE"
+
+
+def configured_language(cbpi):
+    """The language chosen in the server's settings; English when unset."""
+    try:
+        value = cbpi.config.get(LANGUAGE_SETTING, None)
+    except Exception:  # noqa: BLE001 - a server without settings: the default
+        value = None
+    return normalise_language(value)
+
+
+# The browser's own date and time pickers, on a server that has them (this
+# fork from 4.7.7.post15); a text field with the format spelled out on one that
+# does not.
+DateProperty = getattr(Property, "Date", Property.Text)
+TimeProperty = getattr(Property, "Time", Property.Text)
+NATIVE_PICKERS = DateProperty is not Property.Text
+
+#: Which settings each field applies to (cbpi.api.property.PropertyType). A
+#: server or interface from before show_if shows every field, as before.
+ONLY_FOR_DATE = {"Mode": [MODE_DATE, LEGACY_DATE]}
+ONLY_FOR_READY_BY = {"Timing": TIMING_READY}
+ONLY_FOR_START_AT = {"Timing": ["", TIMING_START]}
+FOR_THE_WATER = [ONLY_FOR_READY_BY, {"Campden_Reminder": "Yes"}]
+
+
+def _field(prop, name, show_if=None):
+    """A property with the name the form shows, and when it shows.
+
+    Set after construction: a server from before display_label and show_if
+    takes no such arguments, and ignores the attributes - its form shows the
+    saved settings' names, and every field, as it always did.
+    """
+    prop.display_label = name
+    if show_if is not None:
+        prop.show_if = show_if
+    return prop
+
+
+def degrees(temp_unit):
+    return "°F" if str(temp_unit or "C").strip().upper().startswith("F") else "°C"
+
+
+def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
+    """The step's form, in one language and in words.
+
+    Scott, 29 Oct: "If my language is English, I should not see other
+    languages" - the descriptions were English and German side by side, some
+    German only. The form asks only for what applies: the date only for a
+    Date, the heating fields only for Ready by, "Go on by itself" only for
+    Start at (Ready by always goes on - waiting for a click there meant the
+    water never heated). Strike_Kettle, Strike_Volume, Efficiency_Pct,
+    Margin_Minutes and Language are no longer asked for; see BrewStart._plan
+    and configured_language.
+
+    And, after Apple's design principles (Scott sent them the same day): the
+    fields are named in words ("Time", not "StartTime" - the label stays the
+    saved setting's name), Timing comes first because it decides what the time
+    means, numbers carry their units, and a new step starts from the defaults
+    rather than blanks whose meaning is only in the help text.
+    """
+    def says(key):
+        return t("prop_" + key, language)
+
+    def name(key):
+        return t("name_" + key, language)
+
+    def with_format(text, fmt):
+        if NATIVE_PICKERS:
+            return text
+        return (text + " " + says(fmt)).strip()
+
+    return [
+        _field(Property.Select(label="Timing", options=[TIMING_START, TIMING_READY],
+                               default_value=TIMING_START, description=says("timing")),
+               name("timing")),
+        _field(Property.Select(label="Mode", options=list(MODES), default_value=MODE_TODAY,
+                               description=says("mode")),
+               name("mode")),
+        _field(DateProperty(label="StartDate", configurable=True,
+                            description=with_format(says("start_date"), "format_date")),
+               name("start_date"), ONLY_FOR_DATE),
+        _field(TimeProperty(label="StartTime", configurable=True,
+                            description=with_format(says("start_time"), "format_time")),
+               name("start_time")),
+        _field(Property.Kettle(label="Heat_Kettle", description=says("heat_kettle")),
+               name("heat_kettle"), ONLY_FOR_READY_BY),
+        _field(Property.Number(label="Ready_Temp", configurable=True, unit=degrees(temp_unit),
+                               description=says("ready_temp")),
+               name("ready_temp"), ONLY_FOR_READY_BY),
+        _field(Property.Number(label="Volume", configurable=True, description=says("volume")),
+               name("volume"), FOR_THE_WATER),
+        _field(Property.Select(label="Volume_Unit", options=["gal", "L"],
+                               description=says("volume_unit")),
+               name("volume_unit"), FOR_THE_WATER),
+        _field(Property.Number(label="Heater_Watts", configurable=True, unit="W",
+                               description=says("heater_watts")),
+               name("heater_watts"), ONLY_FOR_READY_BY),
+        _field(Property.Select(label="Campden_Reminder", options=["No", "Yes"],
+                               default_value="No", description=says("campden")),
+               name("campden")),
+        _field(Property.Number(label="NotifyBefore", configurable=True, unit="min",
+                               description=says("notify_before")),
+               name("notify_before")),
+        _field(Property.Select(label="AutoNext", options=["Yes", "No"], default_value="Yes",
+                               description=says("auto_next")),
+               name("auto_next"), ONLY_FOR_START_AT),
+    ]
 
 
 def _simulation_clock():
@@ -64,154 +177,7 @@ def brewing_monotonic():
     return time.monotonic() if source is None else source.monotonic()
 
 
-@parameters(
-    [
-        Property.Select(
-            label="Mode",
-            options=["Today", "DateTime", "Daily"],
-            description=(
-                "Today: today at the start time, else tomorrow / heute zur "
-                "Startzeit, sonst morgen. "
-                "DateTime: fixed date and time / festes Datum + Uhrzeit. "
-                "Daily: next occurrence / nächste Uhrzeit. "
-                "NOTE: Daily currently behaves exactly like Today - it does "
-                "NOT repeat on later days."
-            ),
-        ),
-        Property.Text(
-            label="StartDate",
-            configurable=True,
-            description=(
-                "Nur DateTime: Datum YYYY-MM-DD, oder komplett "
-                "'YYYY-MM-DD HH:MM' / '11.10.26-06:00'"
-            ),
-        ),
-        Property.Text(
-            label="StartTime",
-            configurable=True,
-            description=(
-                "Start time HH:MM / Startzeit (Today, Daily), e.g. 06:00. "
-                "With Timing 'Ready by', the time the water must be ready / "
-                "mit 'Ready by' die Fertig-Zeit"
-            ),
-        ),
-        Property.Select(
-            label="Timing",
-            options=[TIMING_START, TIMING_READY],
-            description=(
-                "Start at: the next step starts at the time above. Ready by: "
-                "the water must be at Ready_Temp by then, and the step works "
-                "out when to start heating from the water's temperature, its "
-                "volume and the element's power. / Start at: der nächste Step "
-                "startet zur Zeit oben. Ready by: das Wasser soll dann "
-                "Ready_Temp haben; der Heizbeginn wird berechnet."
-            ),
-        ),
-        Property.Kettle(
-            label="Heat_Kettle",
-            description=(
-                "Ready by: the kettle with the heating element (on a HERMS, "
-                "the HLT). Its sensor gives its water's starting temperature. "
-                "/ Kessel mit dem Heizstab (HERMS: HLT)"
-            ),
-        ),
-        Property.Number(
-            label="Ready_Temp",
-            configurable=True,
-            description=(
-                "Ready by: the temperature the water must reach - on a HERMS "
-                "the strike temperature / Zieltemperatur des Wassers"
-            ),
-        ),
-        Property.Number(
-            label="Volume",
-            configurable=True,
-            description=(
-                "Ready by: the water in Heat_Kettle, in Volume_Unit / "
-                "Wassermenge im Heat_Kettle"
-            ),
-        ),
-        Property.Kettle(
-            label="Strike_Kettle",
-            description=(
-                "Ready by, optional: the mash tun, when its strike water is "
-                "heated by circulating it through a HERMS coil. Its sensor "
-                "gives the strike water's starting temperature. / optional: "
-                "Maischebottich, wenn das Einmaischwasser über die HERMS-"
-                "Spirale geheizt wird"
-            ),
-        ),
-        Property.Number(
-            label="Strike_Volume",
-            configurable=True,
-            description=(
-                "Ready by, optional: strike water in Strike_Kettle, in "
-                "Volume_Unit. Adds the time to heat it too. / optional: "
-                "Einmaischwasser"
-            ),
-        ),
-        Property.Select(
-            label="Volume_Unit",
-            options=["gal", "L"],
-            description=(
-                "Ready by: unit of Volume. Blank follows the temperature unit "
-                "(F: gal, C: L) / Einheit von Volume"
-            ),
-        ),
-        Property.Number(
-            label="Heater_Watts",
-            configurable=True,
-            description=(
-                "Ready by: the element's power in watts - measured, volts x "
-                "amps, if you can / Heizleistung in Watt"
-            ),
-        ),
-        Property.Number(
-            label="Efficiency_Pct",
-            configurable=True,
-            description=(
-                "Ready by: how much of the element's power ends up in the "
-                "water, in % (blank = 90, from a measured 20 gal HLT). Lower "
-                "it if heating took longer than planned. / Wirkungsgrad in %"
-            ),
-        ),
-        Property.Number(
-            label="Margin_Minutes",
-            configurable=True,
-            description=(
-                "Ready by: spare minutes added to the heat-up (blank = 10) / "
-                "Reserve in Minuten"
-            ),
-        ),
-        Property.Select(
-            label="Campden_Reminder",
-            options=["No", "Yes"],
-            description=(
-                "Remind me to treat the strike water with Campden, with the "
-                "dose for Strike_Volume (or Volume): 1 tablet per 20 gal / "
-                "75 L. / Erinnerung an Campden fürs Einmaischwasser"
-            ),
-        ),
-        Property.Number(
-            label="NotifyBefore",
-            configurable=True,
-            description="Minuten vorher benachrichtigen (0 = aus, leer = 15)",
-        ),
-        Property.Select(
-            label="AutoNext",
-            options=["Yes", "No"],
-            description=(
-                "Yes: continue automatically / automatisch weiter. "
-                "No: wait for confirmation / auf Bestätigung warten."
-            ),
-        ),
-        Property.Select(
-            label="Language",
-            options=available_languages(),
-            description="Language for notifications / Sprache der Meldungen",
-        ),
-    ]
-)
+@parameters(step_properties())
 class BrewStart(CBPiStep):
     """Wait until a configured time, judged against the wall clock, then hand on.
 
@@ -253,6 +219,15 @@ class BrewStart(CBPiStep):
     real minutes for a start a few simulated minutes away, while the water
     heated by the simulation's clock - and was hot long before the time it
     had been asked for.
+
+    When, from 1.2.0.post4: Today, Tomorrow or a Date (schedule.resolve_start).
+    The moment worked out is kept with the step (PLANNED_PROP), because Today
+    and Tomorrow mean nothing on their own: after a power cut the server asks
+    "Resume brew?", and a step that worked Tomorrow out again at 05:30 on brew
+    day would wait until the day after. And a time that had already passed
+    when the brew was started is never acted on by itself - an old Date, or
+    Today chosen in the evening for the next morning, would otherwise start
+    heating at once with nobody expecting it.
     """
 
     #: How far the wall clock may move against the monotonic clock between two
@@ -269,10 +244,25 @@ class BrewStart(CBPiStep):
     #: minutes; once a minute keeps up with that without chasing sensor noise.
     REPLAN_INTERVAL_S = 60
 
+    #: Where the step keeps the moment it worked out: "<settings>|<ISO time>".
+    #: Underscored like the core's _elapsed_seconds, so the form does not show
+    #: it; cleared by reset(), so a new brew works it out afresh.
+    PLANNED_PROP = "_brewstart_planned"
+
+    #: A kept moment further in the past than this is from some earlier day,
+    #: not from a brew interrupted on its way to it, and is worked out afresh.
+    RECALL_WITHIN = timedelta(hours=24)
+
+    #: Until on_start reads the server's setting.
+    language = DEFAULT_LANGUAGE
+
     async def NextStep(self, **kwargs):
         await self.next()
 
     # ----------------------------------------------------------- messages
+
+    def _at(self, moment):
+        return format_start(moment, self.language)
 
     def _unit(self):
         return self.get_config_value("TEMP_UNIT", "C")
@@ -280,13 +270,13 @@ class BrewStart(CBPiStep):
     def _scheduled_message(self):
         if self.plan is None:
             return t("notify_scheduled", self.language,
-                     start=format_start(self.target_start))
+                     start=self._at(self.target_start))
         unit = self._unit()
         key = ("notify_ready_scheduled_strike" if self.plan.strike_minutes > 0
                else "notify_ready_scheduled")
         return t(key, self.language,
-                 ready=format_start(self.ready_at),
-                 start=format_start(self.target_start),
+                 ready=self._at(self.ready_at),
+                 start=self._at(self.target_start),
                  water=format_temp(self.plan.water_temp, unit),
                  target=format_temp(self.plan.target_temp, unit),
                  heat=round(self.plan.heat_minutes),
@@ -297,28 +287,28 @@ class BrewStart(CBPiStep):
         """What to say when the time has already come as the step starts."""
         if self.plan is None:
             return t("notify_already_passed", self.language,
-                     start=format_start(self.target_start))
+                     start=self._at(self.target_start))
         eta = now + timedelta(minutes=self.plan.heat_minutes)
         if eta <= self.ready_at:
             # Due only because of the spare minutes: still on time.
             return t("notify_ready_reached", self.language,
-                     ready=format_start(self.ready_at))
+                     ready=self._at(self.ready_at))
         return t("notify_ready_late", self.language,
                  water=format_temp(self.plan.water_temp, self._unit()),
                  heat=round(self.plan.heat_minutes),
-                 eta=format_start(eta), ready=format_start(self.ready_at))
+                 eta=self._at(eta), ready=self._at(self.ready_at))
 
     def _reached_message(self):
         if self.plan is not None:
             return t("notify_ready_reached", self.language,
-                     ready=format_start(self.ready_at))
+                     ready=self._at(self.ready_at))
         return t("notify_reached_at", self.language,
-                 start=format_start(self.target_start))
+                 start=self._at(self.target_start))
 
-    def _offer_next(self, message, kind=NotificationType.INFO):
+    def _offer_next(self, message, kind=NotificationType.INFO, wrap=True):
         self.cbpi.notify(
             self.name,
-            t("notify_next_step", self.language, message=message),
+            t("notify_next_step", self.language, message=message) if wrap else message,
             kind,
             action=[NotificationAction(
                 t("action_next_step", self.language), self.NextStep)],
@@ -335,6 +325,22 @@ class BrewStart(CBPiStep):
         else:
             self._offer_next(message)
 
+    async def _already_passed(self, requested, mode):
+        """The time asked for was over before the brew was started.
+
+        A Date left from an earlier brew, or Today chosen in the evening for
+        the next morning. Going on would start the next step - and on a Ready
+        by profile, the heating - at once, with nobody expecting it. So
+        nothing happens by itself, whatever AutoNext says: the brewer is told,
+        and Next Step goes on.
+        """
+        self.target_start = None  # _tick: only Next moves on
+        self.summary = t("summary_passed", self.language, start=self._at(requested))
+        await self.push_update()
+        key = "notify_passed_today" if mode == MODE_TODAY else "notify_passed"
+        self._offer_next(t(key, self.language, start=self._at(requested)),
+                         NotificationType.WARNING, wrap=False)
+
     def _tell_no_reading(self):
         heat = self._kettle("Heat_Kettle")
         self.cbpi.notify(
@@ -345,26 +351,66 @@ class BrewStart(CBPiStep):
             NotificationType.WARNING,
         )
 
-    def _campden(self):
-        """Remind, once, to treat the strike water - with the dose."""
+    async def on_props_saved(self):
+        """Feedback as soon as the brewer saves the step, not at brew time.
+
+        A time that has already passed, or settings the step cannot start
+        from, are said now - while the form is still in mind - rather than when
+        the brew is started, perhaps late at night. And the Campden dose -
+        Scott, 29 Oct: remind "when setting the BrewStart setting - or just
+        after clicking okay/save", which is when the water is drawn. Until
+        1.2.0.post4 the dose came when the brew started, for the strike water
+        only. Called by this fork's server from 4.7.7.post15
+        (CBPiStep.on_props_saved); an older one never calls it.
+        """
+        problem = self._settings_problem(brewing_now())
+        if problem:
+            self.cbpi.notify(self.name, problem, NotificationType.WARNING)
         if (self.props.get("Campden_Reminder", None) or "No") != "Yes":
             return
-        volume = self.props.get("Strike_Volume", None)
-        if not volume_given(volume):
-            volume = self.props.get("Volume", None)
-        unit = self._unit()
+        language = self.language
+        unit = self.get_config_value("TEMP_UNIT", "C")
+        volume = self.props.get("Volume", None)
         volume_unit = self.props.get("Volume_Unit", None)
         try:
-            water_l = litres(volume, volume_unit, unit, self.language)
+            water_l = litres(volume, volume_unit, unit, language)
         except ValueError:
-            return  # no volume to dose for
+            self.cbpi.notify(self.name, t("notify_campden_no_volume", language),
+                             NotificationType.WARNING)
+            return
         self.cbpi.notify(
             self.name,
-            t("notify_campden", self.language,
+            t("notify_campden", language,
               tablets=format_tablets(campden_tablets(water_l)),
               volume=volume_label(volume, volume_unit, unit)),
             NotificationType.INFO,
         )
+
+    def _settings_problem(self, now):
+        """What would stop these settings starting as meant, or None.
+
+        The water's temperature is not read: at saving time the kettle may
+        not even be filled. Only what the brewer chose is checked.
+        """
+        mode, start_time, start_date, _, _ = self._read_props()
+        try:
+            requested = resolve_start(mode, start_time, start_date, now=now,
+                                      language=self.language)
+            if self.ready_by:
+                if not self.props.get("Heat_Kettle", None):
+                    raise ValueError(t("err_ready_kettle", self.language))
+                plan_ready_by(requested, self.props.get("Ready_Temp", None),
+                              self.props.get("Heater_Watts", None),
+                              self.get_config_value("TEMP_UNIT", "C"),
+                              self.props.get("Volume", None), None,
+                              volume_unit=self.props.get("Volume_Unit", None),
+                              language=self.language)
+        except ValueError as exc:
+            return t("saved_problem", self.language, error=exc)
+        if requested <= now:
+            key = "saved_passed_today" if mode == MODE_TODAY else "saved_passed"
+            return t(key, self.language, start=self._at(requested))
+        return None
 
     # ----------------------------------------------------------- planning
 
@@ -406,6 +452,15 @@ class BrewStart(CBPiStep):
         return value
 
     def _plan(self, ready_at):
+        """The heating plan: all the water in Heat_Kettle, from its probe.
+
+        Only what the form asks for is read (Scott, 29 Oct: strike and sparge
+        water are heated together in the HLT, and the efficiency and spare
+        minutes are not his to set). Strike_Kettle, Strike_Volume,
+        Efficiency_Pct and Margin_Minutes saved by an older form are ignored,
+        so nothing hidden changes the plan: the built-in efficiency
+        (schedule.HEAT_EFFICIENCY) and spare minutes (DEFAULT_MARGIN_MIN) apply.
+        """
         heat = self._kettle("Heat_Kettle")
         if heat is None or not getattr(heat, "sensor", None):
             raise ValueError(t("err_ready_kettle", self.language))
@@ -416,11 +471,7 @@ class BrewStart(CBPiStep):
             self._unit(),
             self.props.get("Volume", None),
             self._water_temp(heat),
-            strike_volume=self.props.get("Strike_Volume", None),
-            strike_temp=self._water_temp(self._kettle("Strike_Kettle")),
             volume_unit=self.props.get("Volume_Unit", None),
-            margin=self.props.get("Margin_Minutes", None),
-            efficiency=self.props.get("Efficiency_Pct", None),
             language=self.language,
         )
 
@@ -437,7 +488,7 @@ class BrewStart(CBPiStep):
         self.target_start = plan.start
         if abs(moved) >= 60:
             logger.info("BrewStart: heating start moved %+.0f min to %s (water %s)",
-                        moved / 60, format_start(plan.start),
+                        moved / 60, self._at(plan.start),
                         format_temp(plan.water_temp, self._unit()))
         if lost:
             self._tell_no_reading()
@@ -465,11 +516,11 @@ class BrewStart(CBPiStep):
             return
         remaining = max(0, self.wall_clock_remaining(now))
         logger.warning("BrewStart: the system clock moved %+.0fs; %s is %ss away",
-                       jump, format_start(self.target_start), remaining)
+                       jump, self._at(self.target_start), remaining)
         self.cbpi.notify(
             self.name,
             t("notify_clock_corrected", self.language,
-              start=format_start(self.target_start),
+              start=self._at(self.target_start),
               countdown=format_countdown(remaining)),
             NotificationType.WARNING,
         )
@@ -479,12 +530,12 @@ class BrewStart(CBPiStep):
             water = ("?" if self.plan.assumed
                      else format_temp(self.plan.water_temp, self._unit()))
             self.summary = t("summary_ready_waiting", self.language,
-                             ready=format_start(self.ready_at),
-                             start=format_start(self.target_start),
+                             ready=self._at(self.ready_at),
+                             start=self._at(self.target_start),
                              water=water, countdown=format_countdown(remaining))
         else:
             self.summary = t("summary_waiting", self.language,
-                             start=format_start(self.target_start),
+                             start=self._at(self.target_start),
                              countdown=format_countdown(remaining))
 
     def _prewarn(self, remaining):
@@ -519,20 +570,16 @@ class BrewStart(CBPiStep):
         return False
 
     def _read_props(self):
-        mode = self.props.get("Mode", None) or "Today"
+        mode = str(self.props.get("Mode", None) or MODE_TODAY).strip() or MODE_TODAY
         start_time = self.props.get("StartTime", None)
         start_date = self.props.get("StartDate", None)
         start_time = "" if start_time is None else str(start_time).strip()
         start_date = "" if start_date is None else str(start_date).strip()
-        self.language = normalise_language(self.props.get("Language", None))
-
-        # Häufiger Fehler: StartTime leer gelassen
-        if not start_time and mode != "DateTime":
-            start_time = "06:00"
-        if mode == "DateTime" and not start_date and start_time:
-            # Erlaubt: kompletter Zeitstempel nur in StartTime
-            start_date = start_time
-            start_time = ""
+        # One language for the whole plugin, from the server's settings. The
+        # step's own Language setting, from older forms, is no longer read.
+        self.language = configured_language(self.cbpi)
+        # A blank StartTime is a configuration error, as a blank StartDate is
+        # for a Date: until 1.2.0.post4 it quietly meant 06:00.
 
         raw_notify = self.props.get("NotifyBefore", None)
         try:
@@ -543,9 +590,50 @@ class BrewStart(CBPiStep):
         except (TypeError, ValueError):
             notify_before = 15
 
-        auto_next = (self.props.get("AutoNext", None) or "Yes") == "Yes"
         self.ready_by = (self.props.get("Timing", None) or TIMING_START) == TIMING_READY
+        # Ready by always goes on by itself: waiting for a click at the heating
+        # start would leave the water cold by the time it was asked for. Until
+        # 1.2.0.post4 the form allowed it, and the rig page had to warn.
+        auto_next = self.ready_by or (self.props.get("AutoNext", None) or "Yes") == "Yes"
         return mode, start_time, start_date, max(0, notify_before), auto_next
+
+    # ----------------------------------------------------------- remembering
+
+    def _settings_key(self, mode, start_time, start_date):
+        """What the kept moment was worked out from. The step's id is in it, so
+        a moment copied along with a profile into a recipe, and loaded back as
+        a new step, is not mistaken for this one's."""
+        return "{}|{}|{}|{}".format(self.id, mode, start_time, start_date)
+
+    def _recall(self, key, now):
+        """The moment kept for these settings, or None."""
+        kept = self.props.get(self.PLANNED_PROP, None)
+        if not kept:
+            return None
+        settings, _, moment = str(kept).rpartition("|")
+        if settings != key:
+            return None  # the settings have changed since: work it out afresh
+        try:
+            moment = datetime.fromisoformat(moment)
+        except ValueError:
+            return None
+        if moment < now - self.RECALL_WITHIN:
+            return None
+        return moment
+
+    async def _keep(self, key, moment):
+        self.props[self.PLANNED_PROP] = "{}|{}".format(key, moment.isoformat())
+        try:
+            await self.cbpi.step.save()
+        except Exception as exc:  # noqa: BLE001 - kept in memory either way
+            logger.warning("BrewStart: could not save the planned start - %s", exc)
+
+    def _forget(self):
+        try:
+            if self.PLANNED_PROP in self.props:
+                del self.props[self.PLANNED_PROP]
+        except Exception:  # noqa: BLE001
+            self.props[self.PLANNED_PROP] = ""
 
     async def on_start(self):
         self.timer = None
@@ -559,21 +647,26 @@ class BrewStart(CBPiStep):
         self._planned_at = brewing_monotonic()
         mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
         self.notify_before_seconds = notify_before * 60
+        now = brewing_now()
+        key = self._settings_key(mode, start_time, start_date)
 
         try:
-            resolved = resolve_start(
-                mode=mode,
-                start_time=start_time,
-                start_date=start_date,
-                now=brewing_now(),
-                language=self.language,
-            )
+            requested = self._recall(key, now)
+            resumed = requested is not None
+            if not resumed:
+                requested = resolve_start(
+                    mode=mode,
+                    start_time=start_time,
+                    start_date=start_date,
+                    now=now,
+                    language=self.language,
+                )
             if self.ready_by:
-                self.plan = self._plan(resolved)
-                self.ready_at = resolved
+                self.plan = self._plan(requested)
+                self.ready_at = requested
                 self.target_start = self.plan.start
             else:
-                self.target_start = resolved
+                self.target_start = requested
         except ValueError as exc:
             logger.error("BrewStart config error: %s", exc)
             self.plan = None
@@ -587,13 +680,21 @@ class BrewStart(CBPiStep):
                              NotificationType.ERROR)
             return
 
-        self._campden()
+        if not resumed:
+            if requested <= now:
+                await self._already_passed(requested, mode)
+                return
+            # Kept only once it stands: a moment that was never valid must not
+            # come back later as if a brew had been interrupted on its way to it.
+            await self._keep(key, requested)
+
         if self.plan is not None and self.plan.assumed:
             self._tell_no_reading()
 
-        now = brewing_now()
         remaining = self.wall_clock_remaining(now)
         if remaining <= 0:
+            # Ready by with less time left than the heating needs, or a brew
+            # resumed after its time: go on now - the brewer set this up.
             await self._arrive(self._due_message(now))
             return
 
@@ -601,7 +702,7 @@ class BrewStart(CBPiStep):
         self._show(remaining)
         await self.push_update()
         logger.info("BrewStart waiting %s seconds until %s",
-                    remaining, format_start(self.target_start))
+                    remaining, self._at(self.target_start))
 
     async def on_stop(self):
         self.summary = ""
@@ -609,6 +710,7 @@ class BrewStart(CBPiStep):
 
     async def reset(self):
         self.summary = ""
+        self._forget()
 
     def _pause(self):
         """Real seconds until the next look at the clock.

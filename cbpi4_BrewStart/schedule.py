@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
 try:
-    from .strings import DEFAULT_LANGUAGE, t
+    from .strings import DEFAULT_LANGUAGE, normalise_language, t
 except ImportError:  # pragma: no cover - direct import in tests
-    from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, t
+    from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, normalise_language, t
 
 
 DATETIME_FORMATS = (
@@ -27,6 +27,20 @@ DATETIME_FORMATS = (
 
 TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%H")
 
+DAY_FORMATS = ("%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y")
+
+#: What the step's Mode offers (1.2.0.post4 on).
+MODE_TODAY = "Today"
+MODE_TOMORROW = "Tomorrow"
+MODE_DATE = "Date"
+MODES = (MODE_TODAY, MODE_TOMORROW, MODE_DATE)
+
+#: Older names, still read from saved profiles but no longer offered. DateTime
+#: is Date. Daily meant the next time the clock shows StartTime - today, or
+#: tomorrow once that has passed - as Today did before 1.2.0.post4.
+LEGACY_DATE = "DateTime"
+LEGACY_NEXT = "Daily"
+
 
 def parse_time(value: str, language: str = DEFAULT_LANGUAGE) -> Tuple[int, int, int]:
     """Parse HH:MM[:SS] into (hour, minute, second)."""
@@ -41,6 +55,19 @@ def parse_time(value: str, language: str = DEFAULT_LANGUAGE) -> Tuple[int, int, 
         except ValueError:
             continue
     raise ValueError(t("err_time_invalid", language, value=value))
+
+
+def parse_day(value: str, language: str = DEFAULT_LANGUAGE) -> datetime:
+    """Parse a date alone - YYYY-MM-DD, as a browser's date picker gives it."""
+    text = (value or "").strip()
+    if not text:
+        raise ValueError(t("err_date_missing", language))
+    for fmt in DAY_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError(t("err_date_invalid", language, value=value))
 
 
 def parse_datetime(value: str, language: str = DEFAULT_LANGUAGE) -> datetime:
@@ -68,44 +95,53 @@ def resolve_start(
     Resolve the absolute start datetime.
 
     Modes:
-      - DateTime: start_date + start_time (or full datetime in StartDateTime field via start_date)
-      - Today: today at start_time; if already past, tomorrow
-      - Daily: next occurrence of start_time (today or tomorrow)
+      - Today: today at start_time - even when that has already passed, which
+        the step then refuses to act on by itself.
+      - Tomorrow: tomorrow at start_time.
+      - Date: start_date at start_time. (Older forms: DateTime, and a whole date
+        and time in either field alone.)
+      - Daily, from older forms: the next time the clock shows start_time.
+    Blank is Today. "Today" and "tomorrow" are counted from `now`.
     """
     now = now or datetime.now()
-    mode = (mode or "Today").strip()
+    mode = (mode or MODE_TODAY).strip() or MODE_TODAY
 
-    if mode == "DateTime":
+    if mode in (MODE_DATE, LEGACY_DATE):
         date_text = (start_date or "").strip()
         time_text = (start_time or "").strip()
 
-        # Allow putting the full datetime into StartDate alone
-        if date_text and not time_text:
-            return parse_datetime(date_text)
-
         if date_text and time_text:
-            # Prefer combined parse for flexible formats
             try:
-                return parse_datetime(f"{date_text} {time_text}")
+                return parse_datetime(f"{date_text} {time_text}", language)
             except ValueError:
-                hour, minute, second = parse_time(time_text)
-                day = datetime.strptime(date_text.strip(), "%Y-%m-%d")
+                hour, minute, second = parse_time(time_text, language)
+                day = parse_day(date_text, language)
                 return day.replace(hour=hour, minute=minute, second=second, microsecond=0)
 
-        if time_text and " " in time_text:
-            return parse_datetime(time_text)
+        if not date_text and not time_text:
+            raise ValueError(t("err_datetime_needs_both", language))
 
-        raise ValueError(t("err_datetime_needs_both", language))
+        # Older forms took the whole date and time in one field.
+        try:
+            return parse_datetime(date_text or time_text, language)
+        except ValueError:
+            pass
+        if date_text:
+            parse_day(date_text, language)  # a date that is not one says so
+            raise ValueError(t("err_time_missing", language))
+        parse_time(time_text, language)  # likewise a time
+        raise ValueError(t("err_date_missing", language))
 
-    hour, minute, second = parse_time(start_time)
+    hour, minute, second = parse_time(start_time, language)
     candidate = now.replace(hour=hour, minute=minute, second=second, microsecond=0)
 
-    if mode == "Today":
-        if candidate <= now:
-            candidate += timedelta(days=1)
+    if mode == MODE_TODAY:
         return candidate
 
-    if mode == "Daily":
+    if mode == MODE_TOMORROW:
+        return candidate + timedelta(days=1)
+
+    if mode == LEGACY_NEXT:
         if candidate <= now:
             candidate += timedelta(days=1)
         return candidate
@@ -125,8 +161,21 @@ def format_countdown(seconds: int) -> str:
     return f"{secs}s"
 
 
-def format_start(start: datetime) -> str:
-    return start.strftime("%d.%m.%Y %H:%M")
+# Named here rather than by strftime's %a and %b, which follow the process's
+# locale - a German locale on the Pi would put German names in English text.
+_EN_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_EN_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def format_start(start: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+    """A start time as the brewer reads it: "Fri Oct 30, 07:00" in English,
+    "30.10.2026 07:00" in German. The weekday is there so that a start a day
+    later than meant - Tomorrow chosen after midnight - stands out."""
+    if normalise_language(language) == "de":
+        return start.strftime("%d.%m.%Y %H:%M")
+    return "{} {} {}, {:%H:%M}".format(
+        _EN_DAYS[start.weekday()], _EN_MONTHS[start.month - 1], start.day, start)
 
 
 # ---------------------------------------------------------------------------

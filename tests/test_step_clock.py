@@ -54,13 +54,19 @@ class Kettle:
 class Cbpi:
     """The parts of the server the step touches."""
 
-    def __init__(self, unit="F", readings=None, kettles=None):
+    def __init__(self, unit="F", readings=None, kettles=None, settings=None):
         self.notes = []
+        self.saves = 0
         self.readings = readings or {}
         kettles = kettles or {}
+        settings = dict(settings or {}, TEMP_UNIT=unit)
         self.config = types.SimpleNamespace(
-            get=lambda k, default=None: unit if k == "TEMP_UNIT" else default)
-        self.step = types.SimpleNamespace(push_udpate=lambda: None)
+            get=lambda k, default=None: settings.get(k, default))
+
+        async def save():
+            self.saves += 1
+
+        self.step = types.SimpleNamespace(push_udpate=lambda: None, save=save)
         self.kettle = types.SimpleNamespace(find_by_id=lambda i: kettles.get(i))
         self.sensor = types.SimpleNamespace(
             get_sensor_value=lambda i: self.readings.get(i))
@@ -89,8 +95,7 @@ def shifted(offset):
 
 
 def step_with(props, cbpi, done=None, module=bs):
-    base = {"Mode": "DateTime", "AutoNext": "Yes", "NotifyBefore": 0,
-            "Language": "English"}
+    base = {"Mode": "DateTime", "AutoNext": "Yes", "NotifyBefore": 0}
     base.update(props)
     on_done = (lambda s, r: done.append(r)) if done is not None else (lambda s, r: None)
     return module.BrewStart(cbpi, "s1", "BrewStart", base, on_done)
@@ -152,17 +157,24 @@ def test_autonext_no_offers_next_once_and_waits(monkeypatch):
     assert len(offers) == 1 and "Continue to the next step" in offers[0], cbpi.notes
 
 
-def test_a_time_already_past_hands_over_without_waiting(monkeypatch):
+def test_a_time_already_past_when_the_brew_starts_waits_for_next(monkeypatch):
+    """Until 1.2.0.post4 it handed over at once - and on a Ready by profile the
+    next step heats. A time over before the brew was started is a mistake (an
+    old date, Today meant for tomorrow), so it waits, whatever AutoNext says."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
     step = step_with({"StartDate": "2026-10-23 21:00"}, cbpi)
 
     async def go():
         await step.on_start()
-        return await step._tick(NIGHT, 1.0)
+        return [await step._tick(NIGHT + timedelta(minutes=m), 1.0 + m * 60)
+                for m in range(30)]
 
-    assert asyncio.run(go()) is True
-    assert len(cbpi.said("already passed")) == 1, cbpi.notes
+    assert not any(asyncio.run(go()))
+    offers = [m for m, action in cbpi.notes if action]
+    assert len(offers) == 1 and "has already passed, so nothing starts by itself" in offers[0], \
+        cbpi.notes
+    assert bs.BrewStart.PLANNED_PROP not in step.props, "a moment never acted on is not kept"
 
 
 def test_a_configuration_error_never_starts_by_itself(monkeypatch):
@@ -188,20 +200,37 @@ def hlt_and_tun(hlt=64.0, tun=63.0):
     return Cbpi(unit="F", readings=readings, kettles=kettles)
 
 
+#: Scott's way (29 Oct): all the strike and sparge water heated together in
+#: the HLT. Volume is all of it.
 HERMS = {"StartDate": "2026-10-24 07:00", "Timing": "Ready by",
-         "Heat_Kettle": "hlt", "Ready_Temp": 163, "Volume": 15, "Volume_Unit": "gal",
-         "Strike_Kettle": "mt", "Strike_Volume": 8, "Heater_Watts": 5346}
+         "Heat_Kettle": "hlt", "Ready_Temp": 163, "Volume": 23, "Volume_Unit": "gal",
+         "Heater_Watts": 5346}
+
+#: Settings an older form asked for and saved, which no longer change the plan.
+NO_LONGER_ASKED = {"Strike_Kettle": "mt", "Strike_Volume": 8, "Efficiency_Pct": 50,
+                   "Margin_Minutes": 60, "Language": "Deutsch"}
 
 
-def test_ready_by_plans_from_both_probes(monkeypatch):
+def test_ready_by_plans_all_the_water_from_the_hlt(monkeypatch):
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = hlt_and_tun()
     step = step_with(HERMS, cbpi)
     asyncio.run(step.on_start())
-    expected = plan_ready_by(REAL_DATETIME(2026, 10, 24, 7, 0), 163, 5346, "F", 15, 64.0,
-                             strike_volume=8, strike_temp=63.0, volume_unit="gal")
+    expected = plan_ready_by(REAL_DATETIME(2026, 10, 24, 7, 0), 163, 5346, "F", 23, 64.0,
+                             volume_unit="gal")
     assert step.target_start == expected.start
-    assert len(cbpi.said("for the strike water")) == 1, cbpi.notes
+    assert len(cbpi.said("heating starts about Sat Oct 24")) == 1, cbpi.notes
+    assert not cbpi.said("strike water"), cbpi.notes
+
+
+def test_settings_the_form_no_longer_asks_for_change_nothing(monkeypatch):
+    monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
+    plain, older = step_with(HERMS, hlt_and_tun()), step_with(dict(HERMS, **NO_LONGER_ASKED),
+                                                              hlt_and_tun())
+    asyncio.run(plain.on_start())
+    asyncio.run(older.on_start())
+    assert older.target_start == plain.target_start
+    assert older.language == "en"
 
 
 def test_ready_by_replans_as_the_water_cools(monkeypatch):
@@ -237,16 +266,29 @@ def test_a_stale_reading_is_not_planned_from(monkeypatch):
     assert len(cbpi.said("No usable reading from HLT")) == 1, cbpi.notes
 
 
-def test_campden_reminder_doses_the_strike_water_when_asked(monkeypatch):
+def test_campden_reminder_comes_when_the_step_is_saved(monkeypatch):
+    """Scott, 29 Oct: remind "when setting the BrewStart setting - or just after
+    clicking okay/save". The dose is for all the water, and the brew's start
+    says nothing more about it."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     quiet = hlt_and_tun()
-    asyncio.run(step_with(HERMS, quiet).on_start())
+    asyncio.run(step_with(HERMS, quiet).on_props_saved())
     assert not quiet.said("Campden")
 
     asked = hlt_and_tun()
-    asyncio.run(step_with(dict(HERMS, Campden_Reminder="Yes"), asked).on_start())
+    step = step_with(dict(HERMS, Campden_Reminder="Yes"), asked)
+    asyncio.run(step.on_props_saved())
     reminders = asked.said("Campden")
-    assert len(reminders) == 1 and "½ Campden tablet(s) for 8 gal" in reminders[0], asked.notes
+    assert len(reminders) == 1 and "1¼ tablet(s) for 23 gal of brewing water" in reminders[0], \
+        asked.notes
+
+    asyncio.run(step.on_start())
+    assert len(asked.said("Campden")) == 1, "the brew's start repeated it"
+
+    blank = hlt_and_tun()
+    asyncio.run(step_with(dict(HERMS, Campden_Reminder="Yes", Volume=""), blank)
+                .on_props_saved())
+    assert len(blank.said("water volume is blank")) == 1, blank.notes
 
 
 # ----------------------------------------------------------- the real loop
@@ -407,8 +449,7 @@ def test_ready_by_is_planned_on_the_simulations_clock(simulation):
     step = step_with(TONIGHT, hlt_and_tun())
     asyncio.run(step.on_start())
     ready = SIM_DAY.replace(hour=19)
-    expected = plan_ready_by(ready, 163, 5346, "F", 15, 64.0, strike_volume=8,
-                             strike_temp=63.0, volume_unit="gal")
+    expected = plan_ready_by(ready, 163, 5346, "F", 23, 64.0, volume_unit="gal")
     assert step.ready_at == ready
     assert step.target_start == expected.start
     assert step.wall_clock_remaining() == int((expected.start - SIM_DAY).total_seconds())
