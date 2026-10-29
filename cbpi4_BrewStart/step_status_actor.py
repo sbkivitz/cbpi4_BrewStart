@@ -5,8 +5,48 @@ from cbpi.api import *
 from cbpi.api.step import StepState
 
 from .step_match import is_matching_step_active
+from .strings import DEFAULT_LANGUAGE, t
 
 logger = logging.getLogger(__name__)
+
+STEP_KINDS = [
+    "Mash",
+    "Boil",
+    "Whirlpool",
+    "Mash or Boil",
+    "Mash+Boil+Whirlpool",
+    "AnyActive",
+    "Custom",
+]
+
+MATCH_MODES = [
+    "TypeContains",
+    "TypeOrNameContains",
+    "AnyActive",
+    "TypeExact",
+    "NameContains",
+    "NameExact",
+]
+
+
+def status_actor_properties(language=DEFAULT_LANGUAGE):
+    """StepStatusActor's form, in one language and in words. MatchMode and
+    MatchValue only apply to StepKind Custom, and are shown only then (a server
+    or interface from before show_if shows them always, and the saved names
+    instead of display_label)."""
+    custom_only = {"StepKind": "Custom"}
+    step_kind = Property.Select(label="StepKind", options=list(STEP_KINDS),
+                                description=t("actor_step_kind", language))
+    step_kind.display_label = t("name_step_kind", language)
+    match_mode = Property.Select(label="MatchMode", options=list(MATCH_MODES),
+                                 description=t("actor_match_mode", language))
+    match_mode.display_label = t("name_match_mode", language)
+    match_mode.show_if = custom_only
+    match_value = Property.Text(label="MatchValue", configurable=True,
+                                description=t("actor_match_value", language))
+    match_value.display_label = t("name_match_value", language)
+    match_value.show_if = custom_only
+    return [step_kind, match_mode, match_value]
 
 
 class _StepStatusActorBase(CBPiActor):
@@ -38,10 +78,10 @@ class _StepStatusActorBase(CBPiActor):
     async def on(self, power=None):
         if power is not None:
             self.power = power
-        logger.debug("%s %s: manuelles ON ignoriert", self.__class__.__name__, self.id)
+        logger.debug("%s %s: manual ON ignored", self.__class__.__name__, self.id)
 
     async def off(self):
-        logger.debug("%s %s: manuelles OFF ignoriert", self.__class__.__name__, self.id)
+        logger.debug("%s %s: manual OFF ignored", self.__class__.__name__, self.id)
 
     def get_state(self):
         return self.state
@@ -84,69 +124,29 @@ class _StepStatusActorBase(CBPiActor):
             await asyncio.sleep(1)
 
 
-@parameters(
-    [
-        Property.Select(
-            label="StepKind",
-            options=[
-                "Mash",
-                "Boil",
-                "Whirlpool",
-                "Mash or Boil",
-                "Mash+Boil+Whirlpool",
-                "AnyActive",
-                "Custom",
-            ],
-            description=(
-                "Mash/Boil/Whirlpool: fertige Filter. "
-                "Whirlpool erkennt Typ oder Step-Namen (z.B. WaitStep 'Whirlpool'). "
-                "Custom: MatchMode + MatchValue nutzen."
-            ),
-        ),
-        Property.Select(
-            label="MatchMode",
-            options=[
-                "TypeContains",
-                "TypeOrNameContains",
-                "AnyActive",
-                "TypeExact",
-                "NameContains",
-                "NameExact",
-            ],
-            description="Nur bei StepKind=Custom relevant.",
-        ),
-        Property.Text(
-            label="MatchValue",
-            configurable=True,
-            description=(
-                "Nur Custom: Suchtext, Komma erlaubt (z.B. 'boil,whirlpool'). "
-                "Leer bei TypeContains → 'mash'."
-            ),
-        ),
-    ]
-)
+@parameters(status_actor_properties())
 class StepStatusActor(_StepStatusActorBase):
-    """Virtueller Actor für Mash / Boil / Whirlpool (oder Custom-Filter)."""
+    """A virtual actor that is ON during Mash / Boil / Whirlpool (or a Custom filter)."""
 
     fixed_step_kind = None
 
 
 @parameters([])
 class MashStatusActor(_StepStatusActorBase):
-    """ON während MashIn-/MashStep (Typ oder Name)."""
+    """ON during a MashIn or Mash step (by type or name)."""
 
     fixed_step_kind = "Mash"
 
 
 @parameters([])
 class BoilStatusActor(_StepStatusActorBase):
-    """ON während BoilStep / BM_BoilStep (Typ oder Name)."""
+    """ON during a BoilStep / BM_BoilStep (by type or name)."""
 
     fixed_step_kind = "Boil"
 
 
 @parameters([])
 class WhirlpoolStatusActor(_StepStatusActorBase):
-    """ON während Whirlpool — inkl. benannter Wait/Notification-Steps."""
+    """ON during Whirlpool - including Wait/Notification steps named so."""
 
     fixed_step_kind = "Whirlpool"

@@ -1,142 +1,128 @@
 # cbpi4_BrewStart
 
-CraftBeerPi4-Plugin mit zwei Bausteinen:
+A CraftBeerPi 4 plugin with two parts:
 
-1. **`BrewStart`** – Mash-Step: Brauvorgang zu einer geplanten Startzeit starten  
-2. **`StepStatusActor`** – virtueller Actor: ON, solange ein passender Step (z.B. MashStep) aktiv ist — nutzbar als Abhängigkeit mit [cbpi4-DependentActor](https://github.com/PiBrewing/cbpi4-DependentActor)
+1. **`BrewStart`** – a mash step that starts the brew at a set time, or has the water hot by then.
+2. **`StepStatusActor`** – a virtual actor that is ON while a matching step (a mash step, say) is running. Usable as a dependency with [cbpi4-DependentActor](https://github.com/PiBrewing/cbpi4-DependentActor).
 
-Als erster Mash-Step in deinem Rezept wartet `BrewStart` bis zur eingestellten Uhrzeit (optional mit Datum), zeigt einen Countdown an und startet danach automatisch den nächsten Step — oder wartet auf deine Bestätigung.
+Put first in a mash profile, `BrewStart` waits until the time you set, shows a countdown, and then starts the next step by itself - or waits for you to confirm.
 
 ## Installation
 
-Direkt vom GitHub-Repo (auf dem Pi):
+From the GitHub repository (on the Pi):
 
 ```bash
 pipx runpip cbpi4 install https://github.com/braubunker/cbpi4_BrewStart/archive/main.zip
 sudo systemctl restart craftbeerpi
 ```
 
-Repo: https://github.com/braubunker/cbpi4_BrewStart
+Original repository: https://github.com/braubunker/cbpi4_BrewStart
 
-Lokal / editierbar:
+From a local copy:
 
 ```bash
-pipx runpip cbpi4 install .
-# oder:
-pipx runpip cbpi4 install -e /pfad/zu/cbpi4_BrewStart
+pipx runpip cbpi4 install /path/to/cbpi4_BrewStart
 ```
 
-Danach CraftBeerPi4 neu starten (`cbpi start` bzw. Service neu starten).
+Not with `-e`: CraftBeerPi finds plugins with `pkgutil`, which does not see editable installs, so an editable install is never loaded. Restart CraftBeerPi afterwards (`cbpi start`, or restart the service).
 
-## Verwendung
+## Use
 
-1. Rezept / Mash Profile öffnen
-2. Als **ersten Step** einen neuen Step vom Typ **`BrewStart`** hinzufügen
-3. Parameter setzen:
+1. Open the recipe or the **Mash Profile**.
+2. Add a step of type **`BrewStart`** as the **first step**.
+3. Fill in its settings. The form shows only the ones that apply: StartDate only for a Date, the heating settings only for Ready by.
 
-| Parameter | Bedeutung |
-|-----------|-----------|
-| **Mode** | `Today` = heute zur Uhrzeit (wenn schon vorbei → morgen). `DateTime` = festes Datum + Uhrzeit. `Daily` = nächste passende Uhrzeit. |
-| **StartDate** | Nur bei `DateTime`: z.B. `2026-10-11` oder komplett `2026-10-11 06:00` / `11.10.2026 06:00` |
-| **StartTime** | Uhrzeit als `HH:MM`, z.B. `06:00`. Mit `Timing = Ready by` die Fertig-Zeit |
-| **Timing** | `Start at` = der nächste Step startet zur Zeit oben (wie bisher). `Ready by` = das Wasser soll zur Zeit oben fertig sein; der Heizbeginn wird berechnet (siehe unten) |
-| **NotifyBefore** | Minuten vorher warnen (Standard gedanklich 15; `0` = aus) |
-| **AutoNext** | `Yes` = nach Erreichen der Zeit sofort weiter. `No` = Notification mit Button „Next Step“ |
-| **Campden_Reminder** | `Yes` = Erinnerung mit Dosis: 1 Campden-Tablette pro 20 gal / 75 L Einmaischwasser |
+| Setting | What it does |
+|---------|--------------|
+| **Mode** | `Today`, `Tomorrow`, or a `Date` you pick. Today and Tomorrow count from when you start the brew. Blank: Today. |
+| **StartDate** | With `Date` only: the day, picked with the browser's date picker. |
+| **StartTime** | Picked with the browser's time picker. With `Start at`, when the next step starts; with `Ready by`, when the water must be hot. |
+| **Timing** | `Start at`: the next step starts at StartTime. `Ready by`: the water reaches Ready_Temp by StartTime, and the step works out when heating has to start (below). |
+| **Campden_Reminder** | `Yes`: when you save the step, a notification gives the Campden dose for Volume - 1 tablet per 20 gal / 75 L, rounded up to a quarter tablet. |
+| **NotifyBefore** | A heads-up notification this many minutes before the start - with Ready by, before heating starts. Blank: 15. `0`: none. |
+| **AutoNext** | `Yes`: go on to the next step at the time, by itself. `No`: wait for you to press **Next Step** in the notification. |
 
-### Ready by – Wasser zur Uhrzeit fertig
+The date and time pickers need this fork's CraftBeerPi (4.7.7.post15 or later) and its interface (cbpi4gui 0.5.1.a3.post3 or later). On an older server the two fields are text, with the format in their description: `YYYY-MM-DD` and 24-hour `HH:MM`.
 
-Mit `Timing = Ready by` ist die Zeit oben der Zeitpunkt, an dem das Wasser
-`Ready_Temp` erreicht haben soll. Der Step misst die Wassertemperatur über die
-Sensoren der Kessel und rechnet zurück, wann geheizt werden muss – und plant
-jede Minute neu, damit Wasser, das über Nacht abkühlt, früher startet statt zu
-spät fertig zu sein.
+### A time that has already passed
 
-| Parameter | Bedeutung |
-|-----------|-----------|
-| **Heat_Kettle** | Kessel mit dem Heizstab (HERMS: HLT); sein Sensor liefert die Starttemperatur |
-| **Volume** | Wasser im Heat_Kettle |
-| **Strike_Kettle** | optional: Maischebottich, wenn das Einmaischwasser über die HERMS-Spirale geheizt wird |
-| **Strike_Volume** | optional: Einmaischwasser – dessen Aufheizzeit kommt hinzu |
-| **Ready_Temp** | Zieltemperatur (HERMS: Einmaischtemperatur) |
-| **Volume_Unit** | `gal` oder `L`; leer = nach Temperatureinheit (F: gal) |
-| **Heater_Watts** | Leistung des Heizstabs in Watt, am besten gemessen (Volt × Ampere) |
-| **Efficiency_Pct** | Anteil der Leistung, der im Wasser ankommt (leer = 90 %, an einem 20-gal-HLT gemessen). Kleiner machen, wenn das Aufheizen länger dauerte als geplant |
-| **Margin_Minutes** | Reserve in Minuten (leer = 10) |
+If the time you asked for is already over when you start the brew - a date left from an earlier brew, or `Today` chosen in the evening when you meant the next morning - nothing starts by itself, whatever AutoNext says. A notification says so, with a **Next Step** button to go on now. To start the next day instead, stop the brew, set Mode to `Tomorrow` and start it again.
 
-Ohne gültigen Messwert plant der Step, als hätte das Wasser 2 °C / 35.6 °F –
-also früher statt zu spät – und meldet es.
+The step keeps the date and time it worked out. If the server restarts while it waits - after a power cut it asks **Resume brew?** - Resume waits for that same moment: a `Tomorrow` worked out again at 05:30 on brew day would otherwise mean the day after. If the moment passed while the server was down, Resume goes on at once. Resetting the profile forgets it.
 
-Im Simulator (cbpi4-simvessel, `SIM_TIME_SCALE`) gelten die Zeiten auf der Uhr
-der Simulation, nach der auch das Wasser heizt: bei 60× kommt der Heizbeginn
-60-mal so schnell.
+### Ready by – hot water at a set time
 
-**In English.** With `Timing = Ready by`, the time above is when the water
-must be at `Ready_Temp`. The step reads the water's temperature from the
-kettles' sensors and works back to when heating must start, from the volumes
-and the element's power: `Heat_Kettle` is the kettle with the element (the
-HLT on a HERMS) and `Volume` its water; `Strike_Kettle` and `Strike_Volume`
-add strike water heated through a HERMS coil. It re-plans every minute, so
-water that cools overnight starts earlier. With no usable reading it plans
-from 2 °C / 35.6 °F and says so. `Efficiency_Pct` (blank = 90, measured on a
-20 gal HLT) is the setting to calibrate after a test run. In a simulation
-(cbpi4-simvessel, `SIM_TIME_SCALE`) the times are on the simulation's clock,
-which the water heats by.
+With `Timing = Ready by`, StartTime is when the water must be at `Ready_Temp`. The step reads the water's temperature from the kettle's sensor and works back to when heating has to start. It re-plans every minute, so water that cools overnight starts heating earlier rather than being ready late.
 
-4. Brauprozess starten — der Step wartet und zeigt z.B.  
-   `Start 11.10.2026 06:00 · noch 7h 12m 05s`
-5. Zur Startzeit geht es weiter mit dem nächsten Mash-/Boil-Step
+| Setting | What it does |
+|---------|--------------|
+| **Heat_Kettle** | The kettle with the element - the HLT, holding all the strike and sparge water. Its sensor gives the water's starting temperature. |
+| **Ready_Temp** | The temperature the water must reach by StartTime. |
+| **Volume** | All the water in Heat_Kettle, strike and sparge together. |
+| **Volume_Unit** | `gal` or `L`. Blank: gal with °F, L with °C. |
+| **Heater_Watts** | The element's power in watts - volts × amps, measured if you can. |
 
-### Typischer Ablauf
+The plan assumes 90 % of the element's power ends up in the water (measured on a 20 gal HLT) and adds 10 spare minutes. Neither is a setting. With no usable reading the step plans as if the water were at 2 °C / 35.6 °F - so heating starts early rather than late - and says so.
+
+In a simulation (cbpi4-simvessel, `SIM_TIME_SCALE`) the times are on the simulation's clock, which the water heats by: at 60× the heating start comes 60 times as fast.
+
+4. Start the brew. The step waits and shows, for example,
+   `Start Sat Oct 24, 06:00 · 7h 12m 05s to go`
+5. At the time, the next mash or boil step begins.
+
+### Typical profile
 
 ```
-BrewStart (warten bis 06:00)
-  → MashIn / Aufheizen
-  → Maischschritte
+BrewStart (wait until 06:00)
+  → MashIn / heating
+  → mash steps
   → ...
 ```
 
-So kannst du abends alles vorbereiten, den Prozess starten und morgens beginnt das eigentliche Brauen zur gewünschten Zeit.
+Set everything up in the evening, start the brew, and brewing proper begins at the time you chose.
 
-## Step-Status als Actor (Mash / Boil / Whirlpool)
+### Language
 
-In CraftBeerPi4 können Abhängigkeiten nur über **Actors** laufen (nicht direkt über Steps).  
-Diese virtuellen Actors sind **ON**, solange der passende Step aktiv ist:
+The forms and messages are in one language, chosen in **Settings** under `BREWSTART_LANGUAGE`: English (the default) or Deutsch. Messages follow a change at once; the forms show it after a restart.
 
-| Actor-Typ | ON wenn … |
-|-----------|-----------|
-| **`MashStatusActor`** | MashIn / MashStep (Typ oder Name) |
-| **`BoilStatusActor`** | BoilStep / BM_BoilStep |
-| **`WhirlpoolStatusActor`** | Step-Typ oder **-Name** enthält Whirlpool (z.B. WaitStep „Whirlpool“) |
-| **`StepStatusActor`** | frei konfigurierbar (`StepKind`: Mash / Boil / Whirlpool / Kombinationen / Custom) |
+## Step status as an actor (Mash / Boil / Whirlpool)
 
-### Einrichten
+CraftBeerPi 4 can only make things depend on **actors**, not on steps. These virtual actors are **ON** while the matching step is running:
 
-1. Hardware → Actor → z.B. **`BoilStatusActor`** oder **`WhirlpoolStatusActor`** anlegen (kein Extra-Parameter nötig)
-2. Für Whirlpool den Step im Rezept z.B. **WaitStep** nennen: `Whirlpool`
-3. Optional DependentActor:
+| Actor type | ON while … |
+|------------|------------|
+| **`MashStatusActor`** | a MashIn or Mash step runs (by type or name) |
+| **`BoilStatusActor`** | a BoilStep / BM_BoilStep runs |
+| **`WhirlpoolStatusActor`** | a step whose type or **name** contains Whirlpool runs (a WaitStep named "Whirlpool", say) |
+| **`StepStatusActor`** | you choose (`StepKind`: Mash / Boil / Whirlpool / combinations / Custom, with MatchMode and MatchValue for Custom) |
+
+### Setting up
+
+1. Hardware → Actor → add, for example, **`BoilStatusActor`** or **`WhirlpoolStatusActor`** (no settings needed).
+2. For a whirlpool, name the step in the recipe - a **WaitStep**, say - `Whirlpool`.
+3. Optionally, DependentActor:
 
 ```bash
 pipx runpip cbpi4 install https://github.com/PiBrewing/cbpi4-DependentActor/archive/main.zip
 ```
 
-4. DependentActor:
-   - **Base** = echte Pumpe / Ventil / Heizstab  
-   - **ActorDependency** = `MashStatusActor` / `BoilStatusActor` / `WhirlpoolStatusActor`  
+4. In the DependentActor:
+   - **Base** = the real pump, valve or element
+   - **ActorDependency** = `MashStatusActor` / `BoilStatusActor` / `WhirlpoolStatusActor`
    - **DependencyType** = `Prerequisite`
 
-Im Kettle / Dashboard den **DependentActor** verwenden.
+Use the **DependentActor** in the kettle and on the dashboard.
 
-## Hinweise
+## Notes
 
-- Die Systemzeit des Raspberry Pi / Hosts muss stimmen (Zeitzone prüfen: `timedatectl`).
-- Der Step muss **aktiv** sein (Brauprozess gestartet). Im gestoppten Zustand läuft kein Countdown.
-- Bei `AutoNext = No` bleibt der Step nach Erreichen der Zeit stehen, bis du in der Notification auf **Next Step** tippst.
-- `StepStatusActor` lässt sich nicht manuell schalten — der Status kommt nur vom aktiven Step.
+- The Raspberry Pi's clock and time zone must be right (`timedatectl`).
+- The step must be **running** - the brew started. Nothing counts down while it is stopped.
+- With `AutoNext = No` the step stays put at the time until you press **Next Step** in the notification.
+- `StepStatusActor` cannot be switched by hand; only the running step sets it.
 
-## Entwicklung / Tests
+## Development / tests
 
-Die Zeit- und Match-Logik ist ohne laufendes CraftBeerPi testbar:
+The time and matching logic can be tested without a running CraftBeerPi; the step's own tests need CraftBeerPi importable and are skipped without it:
 
 ```bash
 python -m pip install pytest
@@ -145,28 +131,28 @@ python -m pytest -q
 
 ## Changelog
 
-* **1.2.0.post3** – Im Simulator folgt der Step der Uhr der Simulation (`SIM_TIME_SCALE`) statt der PC-Uhr. Vorher wartete er bei 60× echte Minuten auf einen Start, der simulierte Minuten entfernt war, und das Wasser war lange vor der Fertig-Zeit heiß. Am Rig ändert sich nichts: dort ist die Uhr der Simulation die echte.
-* **1.2.0.post2** – `Timing = Ready by`: Heizbeginn aus Wassertemperatur, Wassermenge und Heizleistung, mit Einmaischwasser über eine HERMS-Spirale; Campden-Erinnerung. Der Step prüft die Uhr selbst, ohne Timer-Neubau: eine Uhrkorrektur löste vorher jede Sekunde eine Meldung aus (24 Meldungen für eine Korrektur um 100 s) und ließ einen Countdown weiterlaufen.
-* **1.2.0** – Mash-/Boil-/Whirlpool-StatusActors + StepKind-Presets (Whirlpool auch per Step-Name)
-* **1.1.1** – BrewStart-Fix: Timer wie DatetimeWaitStep, robustere Props, keine kaputte cbpi-Dependency
-* **1.1.0** – `StepStatusActor`: aktiver Mash-/Rezept-Step als Actor-Status für DependentActor
-* **1.0.0** – Erste Version: Modes Today / DateTime / Daily, Countdown, Vorwarnung, AutoNext
+* **1.2.0.post4** – The form asks only for what applies, in one language (`BREWSTART_LANGUAGE`, English by default): Mode is `Today` / `Tomorrow` / `Date`; StartDate and StartTime use the browser's own date and time pickers; StartDate shows only for a Date and the heating settings only for Ready by. Ready by plans all the water in the HLT: Strike_Kettle, Strike_Volume, Efficiency_Pct and Margin_Minutes are gone from the form, and values saved by an older form are ignored. The Campden reminder comes when the step is saved, with the dose for Volume. A time already passed when the brew starts waits for Next Step instead of starting at once; `Today` no longer moves a passed time to tomorrow (that is what `Tomorrow` is for), and a blank StartTime is an error instead of 06:00. The moment worked out is kept with the step, so Resume after a power cut waits for the same moment. Dates in English messages read "Sat Oct 24, 06:00". Profiles saved with `DateTime` or `Daily` still work.
+* **1.2.0.post3** – In a simulation the step follows the simulation's clock (`SIM_TIME_SCALE`) instead of the PC's. Before, at 60× it waited real minutes for a start a few simulated minutes away, and the water was hot long before the ready time. On a rig nothing changes: there the simulation's clock is the real one.
+* **1.2.0.post2** – `Timing = Ready by`: the heating start from the water's temperature, its volume and the element's power, with strike water heated through a HERMS coil; Campden reminder. The step checks the clock itself, with no Timer rebuilt: a clock correction used to raise a notification every second (24 for one 100 s correction) and leave a countdown running.
+* **1.2.0** – Mash, Boil and Whirlpool status actors, and StepKind presets (Whirlpool also by step name).
+* **1.1.1** – BrewStart fix: timer like DatetimeWaitStep, sturdier settings, no broken cbpi dependency.
+* **1.1.0** – `StepStatusActor`: the running mash or recipe step as an actor's state, for DependentActor.
+* **1.0.0** – First version: modes Today / DateTime / Daily, countdown, heads-up, AutoNext.
 
 ## Troubleshooting BrewStart
 
-Wenn der Step fehlt oder nicht weitergeht:
+If the step is missing or does not go on:
 
 ```bash
-# neu installieren
+# reinstall
 pipx runpip cbpi4 uninstall cbpi4_BrewStart || true
-pipx runpip cbpi4 install -e ~/cbpi4_BrewStart
-# Plugin geladen?
+pipx runpip cbpi4 install ~/cbpi4_BrewStart
+# loaded?
 pipx runpip cbpi4 list | grep -i brew
-# Logs
+# logs
 journalctl -u craftbeerpi -n 100 --no-pager
-# oder:
+# or:
 cbpi start
 ```
 
-Im Step müssen **Mode** und **StartTime** (z.B. `06:30`) gesetzt sein.  
-DateTime-Modus: Datum in **StartDate** als `11.10.26-06:30` oder `2026-10-11 06:30`.
+The step needs **Mode** and **StartTime** (e.g. `06:30`) set, and with Mode `Date` a **StartDate** too.
