@@ -48,7 +48,18 @@ The date and time pickers need this fork's CraftBeerPi (4.7.7.post15 or later) a
 
 If the time you asked for is already over when you start the brew - a date left from an earlier brew, or `Today` chosen in the evening when you meant the next morning - nothing starts by itself, whatever AutoNext says. A notification says so, with a **Next Step** button to go on now. To start the next day instead, stop the brew, set Mode to `Tomorrow` and start it again.
 
-The step keeps the date and time it worked out. If the server restarts while it waits - after a power cut it asks **Resume brew?** - Resume waits for that same moment: a `Tomorrow` worked out again at 05:30 on brew day would otherwise mean the day after. If the moment passed while the server was down, Resume goes on at once. Resetting the profile forgets it.
+The step keeps the date and time it worked out, so a `Tomorrow` worked out again at 05:30 on brew day, after a restart, does not mean the day after. Resetting the profile forgets it.
+
+### After a power cut
+
+The brew carries on by itself (from 1.2.0.post5, with this fork's CraftBeerPi 4.7.7.post21 or later). If the server stops while the step waits, or while the step it handed over to is heating, that step picks up again when the server is back - with nobody pressing anything, and a notification saying so:
+
+* It carries on for up to **two hours after the time you set** (the ready time, or the start time). Waiting, it plans again from the water's temperature; if its start time passed while the power was off, it starts heating at once.
+* Later than that it does not start heating by itself. The server asks **Resume brew?**, as it does for every other step, and the step waits for **Next Step**.
+* A profile you stopped before the power went off stays stopped.
+* A Raspberry Pi has no battery clock and boots with the time it last saved. The server waits, up to ten minutes, for the time to be set from the internet before deciding anything; if it cannot confirm it, it asks instead of heating.
+
+An older server asks **Resume brew?** after a restart, and Resume waits for the same moment; if the moment passed while the server was down, Resume goes on at once.
 
 ### Ready by – hot water at a set time
 
@@ -131,6 +142,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post5** – After a power cut the brew carries on by itself, until two hours after the time set: the step allows the server (CraftBeerPi 4.7.7.post21 or later) to pick it up again, and the step it hands over to. Past those two hours it never starts heating by itself - a Pi corrected to the right time after the wait had resumed included - and waits for Next Step.
 * **1.2.0.post4** – The form asks only for what applies, in one language (`BREWSTART_LANGUAGE`, English by default): Mode is `Today` / `Tomorrow` / `Date`; StartDate and StartTime use the browser's own date and time pickers; StartDate shows only for a Date and the heating settings only for Ready by. Ready by plans all the water in the HLT: Strike_Kettle, Strike_Volume, Efficiency_Pct and Margin_Minutes are gone from the form, and values saved by an older form are ignored. The Campden reminder comes when the step is saved, with the dose for Volume. A time already passed when the brew starts waits for Next Step instead of starting at once; `Today` no longer moves a passed time to tomorrow (that is what `Tomorrow` is for), and a blank StartTime is an error instead of 06:00. The moment worked out is kept with the step, so Resume after a power cut waits for the same moment. Dates in English messages read "Sat Oct 24, 06:00". Profiles saved with `DateTime` or `Daily` still work.
 * **1.2.0.post3** – In a simulation the step follows the simulation's clock (`SIM_TIME_SCALE`) instead of the PC's. Before, at 60× it waited real minutes for a start a few simulated minutes away, and the water was hot long before the ready time. On a rig nothing changes: there the simulation's clock is the real one.
 * **1.2.0.post2** – `Timing = Ready by`: the heating start from the water's temperature, its volume and the element's power, with strike water heated through a HERMS coil; Campden reminder. The step checks the clock itself, with no Timer rebuilt: a clock correction used to raise a notification every second (24 for one 100 s correction) and leave a countdown running.

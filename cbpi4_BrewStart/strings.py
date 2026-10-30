@@ -109,6 +109,12 @@ MESSAGES = {
             "or time and start it again."
         ),
         "summary_passed": "{start} has passed - waiting for Next Step",
+        "notify_too_late": (
+            "It is now {now}, more than {hours} hours after the {asked} you "
+            "set, so heating does not start by itself. Press Next Step to "
+            "start it now."
+        ),
+        "summary_too_late": "Long past {asked} - waiting for Next Step",
         "saved_problem": "Saved, but this step cannot start as set: {error}",
         "saved_passed_today": (
             "Saved, but {start} has already passed. For tomorrow, set Day to "
@@ -262,6 +268,12 @@ MESSAGES = {
             "neu starten."
         ),
         "summary_passed": "{start} ist vorbei - wartet auf Next Step",
+        "notify_too_late": (
+            "Es ist {now}, mehr als {hours} Stunden nach dem eingestellten "
+            "{asked}, darum beginnt das Heizen nicht von selbst. Next Step "
+            "drücken, um jetzt zu beginnen."
+        ),
+        "summary_too_late": "{asked} ist lange vorbei - wartet auf Next Step",
         "saved_problem": "Gespeichert, aber so kann der Step nicht starten: {error}",
         "saved_passed_today": (
             "Gespeichert, aber {start} ist schon vorbei. Für morgen den Tag auf "

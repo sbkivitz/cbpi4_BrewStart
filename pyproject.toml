@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cbpi4_BrewStart"
-version = "1.2.0.post4"
+version = "1.2.0.post5"
 description = "CraftBeerPi4: geplanter Braustart + Actor-Status für Mash/Boil/Whirlpool"
 readme = "README.md"
 license = "GPL-3.0-or-later"

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from cbpi.api import *
 from cbpi.api.dataclasses import NotificationAction, NotificationType
-from cbpi.api.step import CBPiStep, StepResult
+from cbpi.api.step import CBPiStep, StepResult, StepState
 
 try:
     from cbpi.api import clock as brewing_clock
@@ -222,12 +222,22 @@ class BrewStart(CBPiStep):
 
     When, from 1.2.0.post4: Today, Tomorrow or a Date (schedule.resolve_start).
     The moment worked out is kept with the step (PLANNED_PROP), because Today
-    and Tomorrow mean nothing on their own: after a power cut the server asks
-    "Resume brew?", and a step that worked Tomorrow out again at 05:30 on brew
-    day would wait until the day after. And a time that had already passed
-    when the brew was started is never acted on by itself - an old Date, or
-    Today chosen in the evening for the next morning, would otherwise start
-    heating at once with nobody expecting it.
+    and Tomorrow mean nothing on their own: a step that worked Tomorrow out
+    again at 05:30 on brew day, after a restart, would wait until the day
+    after. And a time that had already passed when the brew was started is
+    never acted on by itself - an old Date, or Today chosen in the evening for
+    the next morning, would otherwise start heating at once with nobody
+    expecting it.
+
+    After a power cut, from 1.2.0.post5 (Scott, 30 Oct: "BrewStart should
+    resume after an overnight power cut and attempt to honor the contract to
+    have hot water ready for me"): the step allows the server to carry it on
+    by itself, and the step it hands over to, until RESUME_GRACE after the
+    time it was asked for (StepController.allow_resume, cbpi4 4.7.7.post21).
+    Every other step still waits for the brewer to answer "Resume brew?". And
+    it never starts heating by itself later than that, however it got there -
+    a Pi that booted with a clock hours behind and was corrected once the
+    wait had resumed included: past RESUME_GRACE it waits for Next Step.
     """
 
     #: How far the wall clock may move against the monotonic clock between two
@@ -253,11 +263,80 @@ class BrewStart(CBPiStep):
     #: not from a brew interrupted on its way to it, and is worked out afresh.
     RECALL_WITHIN = timedelta(hours=24)
 
+    #: How long after the time it was asked for - the ready time, or the start
+    #: time - the step, and the step it hands over to, may carry on by
+    #: themselves after a restart, and the step may still start heating by
+    #: itself. Long enough to cover heating started late by a cut and a brewer
+    #: who comes a little after the ready time; short enough that a server back
+    #: in the afternoon does not heat water nobody is expecting any more.
+    RESUME_GRACE = timedelta(hours=2)
+
     #: Until on_start reads the server's setting.
     language = DEFAULT_LANGUAGE
 
     async def NextStep(self, **kwargs):
+        await self._hand_over()
+
+    async def _hand_over(self):
+        """Go on to the next step, passing on permission to carry on after a
+        restart: the heating it starts is part of the same promise."""
+        following = self._following_step()
+        if following is not None:
+            await self._allow_resume(following.id)
         await self.next()
+
+    def _following_step(self):
+        """The step the server starts when this one hands over, chosen as
+        StepController.start() chooses it: a stopped step first, then the
+        first not yet run."""
+        profile = getattr(getattr(self.cbpi, "step", None), "profile", None) or []
+        for wanted in (StepState.STOP, StepState.INITIAL):
+            for item in profile:
+                if getattr(item, "id", None) != self.id and \
+                        getattr(item, "status", None) == wanted:
+                    return item
+        return None
+
+    async def _allow_resume(self, step_id):
+        """Let the server carry `step_id` on by itself after a restart, until
+        RESUME_GRACE after the time asked for. False on a server that cannot -
+        one from before cbpi4 4.7.7.post21 asks "Resume brew?", as before."""
+        asked = getattr(self, "asked_for", None)
+        allow = getattr(getattr(self.cbpi, "step", None), "allow_resume", None)
+        if asked is None or allow is None:
+            return False
+        until = asked + self.RESUME_GRACE
+        if until <= brewing_now():
+            return False
+        try:
+            return bool(await allow(step_id, until.timestamp(), self.name))
+        except Exception as exc:  # noqa: BLE001 - a courtesy; the step runs on
+            logger.warning("BrewStart: could not arrange to carry on after a "
+                           "restart - %s", exc)
+            return False
+
+    def _past_carrying_on(self, now):
+        """Too long after the time asked for to start heating by itself."""
+        asked = getattr(self, "asked_for", None)
+        return asked is not None and now > asked + self.RESUME_GRACE
+
+    async def _too_late(self, now):
+        """The time has come, but long after the time asked for: wait for Next.
+
+        Reached after a power cut that outlasted the promise, or a clock
+        corrected after the wait had resumed - a Raspberry Pi has no battery
+        clock and boots with the time it last saved, hours behind after a long
+        cut. Either way nobody is expecting heat now, so it is offered, not
+        started.
+        """
+        self.target_start = None  # _tick: only Next moves on
+        self.summary = t("summary_too_late", self.language,
+                         asked=self._at(self.asked_for))
+        await self.push_update()
+        self._offer_next(t("notify_too_late", self.language, now=self._at(now),
+                           asked=self._at(self.asked_for),
+                           hours=round(self.RESUME_GRACE.total_seconds() / 3600)),
+                         NotificationType.WARNING, wrap=False)
 
     # ----------------------------------------------------------- messages
 
@@ -562,6 +641,9 @@ class BrewStart(CBPiStep):
             self._replan()
         remaining = self.wall_clock_remaining(now)
         if remaining <= 0:
+            if self._past_carrying_on(now):
+                await self._too_late(now)
+                return False
             await self._arrive(self._reached_message())
             return self.auto_next
         self._show(remaining)
@@ -643,6 +725,7 @@ class BrewStart(CBPiStep):
         self.plan = None
         self.ready_at = None
         self.target_start = None
+        self.asked_for = None
         self._clock_seen = None
         self._planned_at = brewing_monotonic()
         mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
@@ -688,11 +771,19 @@ class BrewStart(CBPiStep):
             # come back later as if a brew had been interrupted on its way to it.
             await self._keep(key, requested)
 
+        # The time it was asked for - the ready time, or the start time. Allowed
+        # from here to carry on by itself after a restart (Scott, 30 Oct).
+        self.asked_for = requested
+        await self._allow_resume(self.id)
+
         if self.plan is not None and self.plan.assumed:
             self._tell_no_reading()
 
         remaining = self.wall_clock_remaining(now)
         if remaining <= 0:
+            if self._past_carrying_on(now):
+                await self._too_late(now)
+                return
             # Ready by with less time left than the heating needs, or a brew
             # resumed after its time: go on now - the brewer set this up.
             await self._arrive(self._due_message(now))
@@ -736,6 +827,6 @@ class BrewStart(CBPiStep):
                 # run() reports DONE, and StepController.done() acts only on
                 # NEXT and ERROR - the profile sat on a finished step for good,
                 # seen live on 23 Oct.
-                self._handover = asyncio.create_task(self.next())
+                self._handover = asyncio.create_task(self._hand_over())
             await asyncio.sleep(self._pause())
         return StepResult.DONE
