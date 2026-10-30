@@ -526,3 +526,150 @@ def test_control_a_whole_look_late_without_the_short_last_pause(simulation, monk
     monkeypatch.setattr(bs.BrewStart, "_pause", lambda self: self.TICK_S)
     handed = hand_over_at_60x(bs, simulation)
     assert handed and handed[0][1] > 20, handed
+
+
+# ----------------------------------------------- daylight saving, on the real step
+#
+# US daylight saving ends at 02:00 on Sunday 1 Nov 2026: the clock on the wall
+# goes from 01:59:59 back to 01:00:00, and the hour after 01:00 happens twice.
+# A brewer setting up on Saturday night for Sunday morning waits across it.
+# These drive the real on_start() and _tick() through that night. They
+# replace test_wall_clock.py's checks, which ran a copy of
+# wall_clock_remaining and compared it with the same subtraction (test-bench
+# audit, 29 Oct, finding 7).
+
+SAT_NIGHT = REAL_DATETIME(2026, 10, 31, 22, 0, 0)
+SUN_SIX = REAL_DATETIME(2026, 11, 1, 6, 0, 0)
+
+
+class WallClock:
+    """What datetime.now() and time.monotonic() say on a Pi in Pacific time.
+
+    `elapsed` is real seconds since `start`. The wall clock follows it until
+    `fall_back_after` (02:00 PDT, four hours after 22:00), when it reads an
+    hour less - 01:00 PST - and carries on from there; `jump`, when given, is
+    added from `jump_after` on instead, for a clock stepped by hand or by NTP.
+    Monotonic time never repeats and never jumps.
+    """
+
+    def __init__(self, start=SAT_NIGHT, fall_back_after=4 * 3600, jump=0, jump_after=None):
+        self.start, self.fall_back_after = start, fall_back_after
+        self.jump, self.jump_after = jump, jump_after
+        self.elapsed = 0.0
+
+    def now(self):
+        shown = self.elapsed
+        if self.fall_back_after is not None and self.elapsed >= self.fall_back_after:
+            shown -= 3600
+        if self.jump_after is not None and self.elapsed >= self.jump_after:
+            shown += self.jump
+        return self.start + timedelta(seconds=shown)
+
+    def monotonic(self):
+        return 5000.0 + self.elapsed
+
+
+def on_the_wall(monkeypatch, wall, module=bs):
+    monkeypatch.setattr(module, "brewing_now", wall.now)
+    monkeypatch.setattr(module, "brewing_monotonic", wall.monotonic)
+
+
+def through_the_night(step, wall, every=30, until=10 * 3600):
+    """The real on_start(), then the real _tick() every `every` real seconds.
+
+    Returns (real seconds, the wall clock) at the first hand-over, or
+    (None, None).
+    """
+    async def go():
+        await step.on_start()
+        while wall.elapsed <= until:
+            if await step._tick():
+                return wall.elapsed, wall.now()
+            wall.elapsed += every
+        return None, None
+    return asyncio.run(go())
+
+
+def test_start_at_six_tomorrow_across_the_fall_back_starts_at_six_on_the_wall(monkeypatch):
+    wall = WallClock()
+    on_the_wall(monkeypatch, wall)
+    cbpi = Cbpi()
+    step = step_with({"Mode": "Tomorrow", "StartTime": "06:00", "Timing": "Start at"}, cbpi)
+    real, shown = through_the_night(step, wall)
+    assert shown is not None, cbpi.notes
+    assert SUN_SIX <= shown < SUN_SIX + timedelta(seconds=30), shown
+    # Nine real hours from 22:00 PDT to 06:00 PST - not the eight on the face.
+    assert 9 * 3600 <= real < 9 * 3600 + 30, real / 3600
+    assert step.target_start == SUN_SIX
+    told = cbpi.said("System clock changed")
+    assert len(told) == 1 and "06:00" in told[0], cbpi.notes
+
+
+def test_ready_by_six_tomorrow_across_the_fall_back_heats_by_the_wall(monkeypatch):
+    wall = WallClock()
+    on_the_wall(monkeypatch, wall)
+    cbpi = hlt_and_tun(hlt=60.0)
+    props = {k: v for k, v in HERMS.items() if k != "StartDate"}
+    props.update(Mode="Tomorrow", StartTime="06:00", Ready_Temp=152, Volume=15)
+    step = step_with(props, cbpi)
+    real, shown = through_the_night(step, wall)
+    plan = plan_ready_by(SUN_SIX, 152, 5346, "F", 15, 60.0, volume_unit="gal")
+    assert plan.start > SAT_NIGHT + timedelta(hours=4)    # after the repeated hour
+    assert shown is not None, cbpi.notes
+    assert plan.start <= shown < plan.start + timedelta(seconds=30), (shown, plan.start)
+    # The real time it took to get there includes the repeated hour.
+    assert abs(real - ((plan.start - SAT_NIGHT).total_seconds() + 3600)) < 30
+    assert step.ready_at == SUN_SIX
+
+
+@pytest.mark.parametrize("jump, reported", [
+    (0, False), (1, False), (30, False), (59, False), (60, False), (-59, False),
+    (61, True), (-61, True), (3600, True), (-3600, True)])
+def test_only_a_clock_moved_more_than_a_minute_is_reported(monkeypatch, jump, reported):
+    wall = WallClock(start=NIGHT, fall_back_after=None, jump=jump, jump_after=10)
+    on_the_wall(monkeypatch, wall)
+    cbpi = Cbpi()
+    step = step_with({"StartDate": "2026-10-24 06:00"}, cbpi)
+    real, shown = through_the_night(step, wall, every=1, until=20)
+    assert shown is None
+    assert len(cbpi.said("System clock changed")) == (1 if reported else 0), cbpi.notes
+    assert step.target_start == REAL_DATETIME(2026, 10, 24, 6, 0)
+
+
+def test_a_clock_stepped_past_the_start_hands_over_once(monkeypatch):
+    wall = WallClock(start=NIGHT, fall_back_after=None, jump=9 * 3600, jump_after=10)
+    on_the_wall(monkeypatch, wall)
+    cbpi = Cbpi()
+    step = step_with({"StartDate": "2026-10-24 06:00"}, cbpi)
+    real, shown = through_the_night(step, wall, every=1, until=20)
+    assert real == 10, real
+    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+
+
+#: A step that follows a clock change with its target - the arithmetic of a
+#: countdown - which a fall-back would make start an hour early by the wall.
+FOLLOWS_THE_CLOCK = ("        remaining = max(0, self.wall_clock_remaining(now))\n",
+                     "        self.target_start += timedelta(seconds=jump)\n"
+                     "        remaining = max(0, self.wall_clock_remaining(now))\n")
+
+
+def load_mutant(old, new):
+    """brew_start.py with exactly one change, from a copy - the source is never written."""
+    source = (ROOT / "cbpi4_BrewStart" / "brew_start.py").read_text(encoding="utf-8")
+    assert source.count(old) == 1, "the mutation must match exactly once"
+    path = Path(tempfile.mkdtemp()) / "brew_start_mutant.py"
+    path.write_text(source.replace(old, new, 1), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("brew_start_mutant", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_control_a_step_that_follows_the_clock_back_starts_an_hour_early(monkeypatch):
+    mutant = load_mutant(*FOLLOWS_THE_CLOCK)
+    wall = WallClock()
+    on_the_wall(monkeypatch, wall, module=mutant)
+    step = step_with({"Mode": "Tomorrow", "StartTime": "06:00", "Timing": "Start at"},
+                     Cbpi(), module=mutant)
+    real, shown = through_the_night(step, wall)
+    assert shown is not None and shown < SUN_SIX - timedelta(minutes=30), shown
