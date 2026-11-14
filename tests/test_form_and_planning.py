@@ -295,8 +295,9 @@ def test_a_date_and_time_from_the_pickers(monkeypatch):
 
 
 def test_today_chosen_in_the_evening_for_the_morning_does_not_heat_now(monkeypatch):
-    """What Today meant until now. It would hand over at once - on a Ready by
-    profile, to the step that heats - so it waits, and says what to change."""
+    """Today with a time already passed would hand over at once - on a Ready
+    by profile, to the step that heats - so the step waits, and says what to
+    change."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = hlt_and_tun()
     step = step_with(dict(HERMS, Mode="Today", StartDate="", StartTime="07:00"), cbpi)
