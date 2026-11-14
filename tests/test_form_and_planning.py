@@ -16,7 +16,7 @@ Two things that follow, tested here too:
 - Today with a time already passed - chosen in the evening for the next
   morning - must not start heating at once.
 
-Negative controls: 1.2.0.post3 (4c14a92), and the kept moment taken away.
+Negative controls: 1.2.0.post3 (e420fb9), and the kept moment taken away.
 """
 
 import asyncio
@@ -35,7 +35,7 @@ from cbpi4_BrewStart.step_status_actor import status_actor_properties  # noqa: E
 from test_step_clock import (HERMS, NIGHT, REAL_DATETIME, Cbpi, frozen,  # noqa: E402
                              hlt_and_tun, load_control, step_with)
 
-POST3 = "4c14a92"
+POST3 = "e420fb9"
 PLANNED = bs.BrewStart.PLANNED_PROP
 GERMAN = re.compile(r"[äöüßÄÖÜ]|\b(und|oder|der|die|das|nur|bei|wenn|Sprache|Wasser|"
                     r"Kessel|Minuten|Heizstab|Einmaisch\w*)\b", re.IGNORECASE)

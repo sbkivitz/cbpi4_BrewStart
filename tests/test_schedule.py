@@ -167,10 +167,10 @@ def _post3_schedule():
     root = Path(__file__).resolve().parents[1]
     try:
         source = subprocess.run(
-            ["git", "-C", str(root), "show", "4c14a92:cbpi4_BrewStart/schedule.py"],
+            ["git", "-C", str(root), "show", "e420fb9:cbpi4_BrewStart/schedule.py"],
             capture_output=True, text=True, encoding="utf-8", check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        pytest.skip("git history with 4c14a92 not available")
+        pytest.skip("git history with e420fb9 not available")
     path = Path(tempfile.mkdtemp()) / "schedule_post3.py"
     path.write_text(source, encoding="utf-8")
     spec = importlib.util.spec_from_file_location("schedule_post3", path)

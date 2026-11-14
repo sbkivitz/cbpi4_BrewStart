@@ -12,7 +12,7 @@ the old countdown runs on, re-detecting the same drift every second - one
 time reached" and a countdown still running after the step has finished.
 
 And in a simulation "the wall clock" is the simulation's: the server's one
-clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, 4f360ae, reads
+clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, fece853, reads
 the PC's clock there - planning on the PC's date and waiting real minutes for
 a start a few simulated minutes away - and is the control for that.
 """
@@ -40,7 +40,7 @@ from cbpi.api.step import StepResult  # noqa: E402
 from cbpi4_BrewStart.schedule import plan_ready_by  # noqa: E402
 
 CONTROL = "6ef8098"
-POST2 = "4f360ae"
+POST2 = "fece853"
 REAL_DATETIME = datetime
 
 
