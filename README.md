@@ -142,6 +142,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post7** – Comments describe the code. No change in behaviour.
 * **1.2.0.post6** – Comments describe the code. No change in behaviour.
 * **1.2.0.post5** – After a power cut the brew carries on by itself, until two hours after the time set: the step allows the server (CraftBeerPi 4.7.7.post21 or later) to pick it up again, and the step it hands over to. Past those two hours it never starts heating by itself - a Pi corrected to the right time after the wait had resumed included - and waits for Next Step.
 * **1.2.0.post4** – The form asks only for what applies, in one language (`BREWSTART_LANGUAGE`, English by default): Mode is `Today` / `Tomorrow` / `Date`; StartDate and StartTime use the browser's own date and time pickers; StartDate shows only for a Date and the heating settings only for Ready by. Ready by plans all the water in the HLT: Strike_Kettle, Strike_Volume, Efficiency_Pct and Margin_Minutes are gone from the form, and values saved by an older form are ignored. The Campden reminder comes when the step is saved, with the dose for Volume. A time already passed when the brew starts waits for Next Step instead of starting at once; `Today` no longer moves a passed time to tomorrow (that is what `Tomorrow` is for), and a blank StartTime is an error instead of 06:00. The moment worked out is kept with the step, so Resume after a power cut waits for the same moment. Dates in English messages read "Sat Oct 24, 06:00". Profiles saved with `DateTime` or `Daily` still work.
