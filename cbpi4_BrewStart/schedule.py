@@ -35,9 +35,9 @@ MODE_TOMORROW = "Tomorrow"
 MODE_DATE = "Date"
 MODES = (MODE_TODAY, MODE_TOMORROW, MODE_DATE)
 
-#: Older names, still read from saved profiles but no longer offered. DateTime
-#: is Date. Daily meant the next time the clock shows StartTime - today, or
-#: tomorrow once that has passed - as Today did before 1.2.0.post4.
+#: Older names, still read from saved profiles but not offered. DateTime is
+#: Date. Daily is the next time the clock shows StartTime - today, or tomorrow
+#: once that has passed - which is Today's meaning before 1.2.0.post4.
 LEGACY_DATE = "DateTime"
 LEGACY_NEXT = "Daily"
 

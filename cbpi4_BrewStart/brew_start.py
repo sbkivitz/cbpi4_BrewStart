@@ -81,20 +81,19 @@ def degrees(temp_unit):
 def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
     """The step's form, in one language and in words.
 
-    Scott, 29 Oct: "If my language is English, I should not see other
-    languages" - the descriptions were English and German side by side, some
-    German only. The form asks only for what applies: the date only for a
-    Date, the heating fields only for Ready by, "Go on by itself" only for
-    Start at (Ready by always goes on - waiting for a click there meant the
-    water never heated). Strike_Kettle, Strike_Volume, Efficiency_Pct,
-    Margin_Minutes and Language are no longer asked for; see BrewStart._plan
-    and configured_language.
+    Every description is in the server's language only, never English and
+    German side by side. The form asks only for what applies: the date only
+    for a Date, the heating fields only for Ready by, "Go on by itself" only
+    for Start at (Ready by always goes on - waiting for a click there would
+    leave the water unheated). Strike_Kettle, Strike_Volume, Efficiency_Pct,
+    Margin_Minutes and Language are not asked for; see BrewStart._plan and
+    configured_language.
 
-    And, after Apple's design principles (Scott sent them the same day): the
-    fields are named in words ("Time", not "StartTime" - the label stays the
-    saved setting's name), Timing comes first because it decides what the time
-    means, numbers carry their units, and a new step starts from the defaults
-    rather than blanks whose meaning is only in the help text.
+    After Apple's design principles, the fields are named in words ("Time",
+    not "StartTime" - the label stays the saved setting's name), Timing comes
+    first because it decides what the time means, numbers carry their units,
+    and a new step starts from the defaults rather than blanks whose meaning
+    is only in the help text.
     """
     def says(key):
         return t("prop_" + key, language)
@@ -150,7 +149,7 @@ def _simulation_clock():
 
     This fork's server has one clock for everything that measures time
     (cbpi.api.clock). On a rig its source is real time, and the step asks the
-    wall clock itself, as it always has. A simulation (cbpi4-simvessel) runs
+    wall clock itself. A simulation (cbpi4-simvessel) runs
     that clock SIM_TIME_SCALE times as fast, and the water heats and every
     other step's timer counts by it - so the step must read it too.
     """
@@ -192,35 +191,34 @@ class BrewStart(CBPiStep):
 
     Why the step's own loop looks at the wall clock, with no countdown:
 
-    The first version computed `target - datetime.now()` once and handed that
-    many seconds to a Timer. A Timer counts a pure duration and has no idea
-    what time it is, so anything that moved the system clock moved the start
-    by as much, silently - and a Raspberry Pi has no RTC: after a power cut it
-    boots with a wrong clock, CraftBeerPi autostarts, the step resolves
-    against that wrong `now()`, and NTP corrects the clock a minute later. A
-    wait across a daylight saving change is out by an hour the same way.
+    A Timer counts a pure duration and has no idea what time it is. Handed
+    `target - datetime.now()` seconds once, it moves the start by as much as
+    anything moves the system clock, silently - and a Raspberry Pi has no RTC:
+    after a power cut it boots with a wrong clock, CraftBeerPi autostarts, the
+    step resolves against that wrong `now()`, and NTP corrects the clock a
+    minute later. A wait across a daylight saving change is out by an hour
+    the same way.
 
-    The next version (this fork, 12 Oct) kept the Timer and rebuilt it
-    whenever it disagreed with the wall clock. The rebuild ran inside the old
-    Timer's own update, and a Timer cannot be stopped from inside itself:
-    stop() cancels the task and then awaits it, the await swallows the
-    cancellation, and the old countdown runs on - re-detecting the same drift
-    every second. Measured on 23 Oct with the real Timer: one 100 s clock
-    correction produced 24 "System clock changed" notifications, 8 "start
-    time reached", and a countdown still running after the step had finished.
+    Nor can the Timer be rebuilt whenever it disagrees with the wall clock.
+    The rebuild would run inside the old Timer's own update, and a Timer
+    cannot be stopped from inside itself: stop() cancels the task and then
+    awaits it, the await swallows the cancellation, and the old countdown runs
+    on - re-detecting the same drift every second. With the real Timer, one
+    100 s clock correction gives 24 "System clock changed" notifications, 8
+    "start time reached", and a countdown still running after the step has
+    finished.
 
     So nothing is rebuilt. run() compares the target with the wall clock every
     TICK_S and hands over when it is reached; a clock that jumps is reported
     once, and the target - an absolute local datetime - is simply still right.
 
     "The wall clock" is the clock the brew runs by: the PC's on a rig, the
-    simulation's in a simulation (brewing_now). Until 1.2.0.post3 the step
-    read the PC's clock in a simulation too. At SIM_TIME_SCALE 60 it waited
-    real minutes for a start a few simulated minutes away, while the water
-    heated by the simulation's clock - and was hot long before the time it
-    had been asked for.
+    simulation's in a simulation (brewing_now). A step reading the PC's clock
+    in a simulation at SIM_TIME_SCALE 60 would wait real minutes for a start a
+    few simulated minutes away, while the water heats by the simulation's
+    clock - and is hot long before the time it was asked for.
 
-    When, from 1.2.0.post4: Today, Tomorrow or a Date (schedule.resolve_start).
+    When: Today, Tomorrow or a Date (schedule.resolve_start).
     The moment worked out is kept with the step (PLANNED_PROP), because Today
     and Tomorrow mean nothing on their own: a step that worked Tomorrow out
     again at 05:30 on brew day, after a restart, would wait until the day
@@ -229,11 +227,10 @@ class BrewStart(CBPiStep):
     the next morning, would otherwise start heating at once with nobody
     expecting it.
 
-    After a power cut, from 1.2.0.post5 (Scott, 30 Oct: "BrewStart should
-    resume after an overnight power cut and attempt to honor the contract to
-    have hot water ready for me"): the step allows the server to carry it on
-    by itself, and the step it hands over to, until RESUME_GRACE after the
-    time it was asked for (StepController.allow_resume, cbpi4 4.7.7.post21).
+    After a power cut, the step allows the server to carry it on by itself,
+    and the step it hands over to, until RESUME_GRACE after the time it was
+    asked for (StepController.allow_resume, cbpi4 4.7.7.post21), so water
+    promised for a time is still hot by then after an overnight cut.
     Every other step still waits for the brewer to answer "Resume brew?". And
     it never starts heating by itself later than that, however it got there -
     a Pi that booted with a clock hours behind and was corrected once the
@@ -299,8 +296,8 @@ class BrewStart(CBPiStep):
 
     async def _allow_resume(self, step_id):
         """Let the server carry `step_id` on by itself after a restart, until
-        RESUME_GRACE after the time asked for. False on a server that cannot -
-        one from before cbpi4 4.7.7.post21 asks "Resume brew?", as before."""
+        RESUME_GRACE after the time asked for. False on a server that cannot:
+        one older than cbpi4 4.7.7.post21 asks "Resume brew?" instead."""
         asked = getattr(self, "asked_for", None)
         allow = getattr(getattr(self.cbpi, "step", None), "allow_resume", None)
         if asked is None or allow is None:
@@ -435,11 +432,9 @@ class BrewStart(CBPiStep):
 
         A time that has already passed, or settings the step cannot start
         from, are said now - while the form is still in mind - rather than when
-        the brew is started, perhaps late at night. And the Campden dose -
-        Scott, 29 Oct: remind "when setting the BrewStart setting - or just
-        after clicking okay/save", which is when the water is drawn. Until
-        1.2.0.post4 the dose came when the brew started, for the strike water
-        only. Called by this fork's server from 4.7.7.post15
+        the brew is started, perhaps late at night. The Campden reminder, a
+        dose for all the water, comes now too: saving the step is when the
+        water is drawn. Called by this fork's server from 4.7.7.post15
         (CBPiStep.on_props_saved); an older one never calls it.
         """
         problem = self._settings_problem(brewing_now())
@@ -533,9 +528,9 @@ class BrewStart(CBPiStep):
     def _plan(self, ready_at):
         """The heating plan: all the water in Heat_Kettle, from its probe.
 
-        Only what the form asks for is read (Scott, 29 Oct: strike and sparge
-        water are heated together in the HLT, and the efficiency and spare
-        minutes are not his to set). Strike_Kettle, Strike_Volume,
+        Only what the form asks for is read: strike and sparge water are
+        heated together in the HLT, and the efficiency and spare minutes are
+        not the brewer's to set. Strike_Kettle, Strike_Volume,
         Efficiency_Pct and Margin_Minutes saved by an older form are ignored,
         so nothing hidden changes the plan: the built-in efficiency
         (schedule.HEAT_EFFICIENCY) and spare minutes (DEFAULT_MARGIN_MIN) apply.
@@ -658,10 +653,10 @@ class BrewStart(CBPiStep):
         start_time = "" if start_time is None else str(start_time).strip()
         start_date = "" if start_date is None else str(start_date).strip()
         # One language for the whole plugin, from the server's settings. The
-        # step's own Language setting, from older forms, is no longer read.
+        # step's own Language setting, saved by older forms, is not read.
         self.language = configured_language(self.cbpi)
         # A blank StartTime is a configuration error, as a blank StartDate is
-        # for a Date: until 1.2.0.post4 it quietly meant 06:00.
+        # for a Date, not a quiet 06:00.
 
         raw_notify = self.props.get("NotifyBefore", None)
         try:
@@ -673,9 +668,9 @@ class BrewStart(CBPiStep):
             notify_before = 15
 
         self.ready_by = (self.props.get("Timing", None) or TIMING_START) == TIMING_READY
-        # Ready by always goes on by itself: waiting for a click at the heating
-        # start would leave the water cold by the time it was asked for. Until
-        # 1.2.0.post4 the form allowed it, and the rig page had to warn.
+        # Ready by always goes on by itself, whatever AutoNext an older form
+        # saved: waiting for a click at the heating start would leave the water
+        # cold by the time it was asked for.
         auto_next = self.ready_by or (self.props.get("AutoNext", None) or "Yes") == "Yes"
         return mode, start_time, start_date, max(0, notify_before), auto_next
 
@@ -772,7 +767,7 @@ class BrewStart(CBPiStep):
             await self._keep(key, requested)
 
         # The time it was asked for - the ready time, or the start time. Allowed
-        # from here to carry on by itself after a restart (Scott, 30 Oct).
+        # from here to carry on by itself after a restart.
         self.asked_for = requested
         await self._allow_resume(self.id)
 
@@ -825,8 +820,8 @@ class BrewStart(CBPiStep):
                 # Handed over the way every step is: next() from a task of its
                 # own, which cancels this one and reports NEXT. Returning from
                 # run() reports DONE, and StepController.done() acts only on
-                # NEXT and ERROR - the profile sat on a finished step for good,
-                # seen live on 23 Oct.
+                # NEXT and ERROR, so returning would leave the profile on a
+                # finished step for good.
                 self._handover = asyncio.create_task(self._hand_over())
             await asyncio.sleep(self._pause())
         return StepResult.DONE

@@ -1,20 +1,20 @@
-"""BrewStart's form, and when it starts - 1.2.0.post4, Scott, 29 Oct 2026.
+"""BrewStart's form, and when it starts.
 
-"If my language is English, I should not see other languages." "Use the OS or
-browser's native date/time selectors." "Setting mode for 'Today' and then
-asking for a StartDate doesn't make sense. Options should include Today,
-Tomorrow, Date. Not daily." Strike_Kettle and Strike_Volume not needed - all
-the strike and sparge water is heated together in the HLT; don't ask for
-Efficiency_Pct or Margin_Minutes; the Campden reminder when the step is saved.
+The form is in one language only and uses the OS or browser's native date and
+time pickers. Mode offers Today, Tomorrow and Date, not Daily, and the date is
+asked for only for a Date. Strike_Kettle and Strike_Volume are not asked for -
+all the strike and sparge water is heated together in the HLT - nor are
+Efficiency_Pct and Margin_Minutes; the Campden reminder comes when the step is
+saved.
 
-Two things the requests imply, tested here too:
+Two things that follow, tested here too:
 
 - Today and Tomorrow mean nothing on their own. After a power cut the server
   asks "Resume brew?", and a step that worked Tomorrow out again at 05:30 on
   brew day would wait until the day after. So the moment worked out is kept
   with the step, and a resumed step waits for that.
 - Today with a time already passed - chosen in the evening for the next
-  morning, as Today meant until now - must not start heating at once.
+  morning - must not start heating at once.
 
 Negative controls: 1.2.0.post3 (4c14a92), and the kept moment taken away.
 """
@@ -51,7 +51,7 @@ def by_label(props):
 
 # ----------------------------------------------------------- the form
 
-def test_the_form_asks_only_for_what_applies_to_scotts_way():
+def test_the_form_asks_only_for_what_applies_when_the_hlt_heats_all_the_water():
     assert labels(bs.step_properties("en")) == [
         "Timing", "Mode", "StartDate", "StartTime", "Heat_Kettle", "Ready_Temp",
         "Volume", "Volume_Unit", "Heater_Watts", "Campden_Reminder", "NotifyBefore",
@@ -130,10 +130,9 @@ def test_the_status_actors_form():
 
 # ----------------------------------------------------------- after Apple's design principles
 #
-# Scott sent https://developer.apple.com/design/human-interface-guidelines/
-# design-principles on 29 Oct, looking at this form: "choose exactly the words
-# you need to label a control", "help people recover from mistakes", "provide
-# clear feedback".
+# https://developer.apple.com/design/human-interface-guidelines/design-principles:
+# "choose exactly the words you need to label a control", "help people recover
+# from mistakes", "provide clear feedback".
 
 def test_every_field_is_named_in_words():
     for p in bs.step_properties("en") + status_actor_properties("en"):
@@ -310,7 +309,8 @@ def test_today_chosen_in_the_evening_for_the_morning_does_not_heat_now(monkeypat
 
 
 def test_a_blank_start_time_never_starts(monkeypatch):
-    """Until 1.2.0.post4 a blank StartTime quietly meant 06:00."""
+    """A blank StartTime never starts at a guessed time such as 06:00: the
+    brewer is told the time is blank."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
     step = step_with({"Mode": "Tomorrow", "StartTime": ""}, cbpi)

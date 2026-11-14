@@ -1,7 +1,7 @@
 """Ready by: when heating must start for the water to be ready on time.
 
 The heat-up model is checked against numbers from a measured rig, not against
-itself. A model of a 20 gal HLT measured on 9-10 Oct 2026 - 5346 W element,
+itself. A model of a 20 gal HLT built from the rig's measurements - 5346 W element,
 237,686 J/K, 9 W/K of losses with its pump running, a probe 65 s behind the
 water - driven by PIDBoil's controller, took this long to bring the water to
 within half a degree of the target:

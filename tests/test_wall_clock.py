@@ -1,12 +1,9 @@
 """BrewStart's string table: every message in both languages, and t() never raises.
 
-This file also held the wall-clock checks until 30 Oct. They ran a copy of
-wall_clock_remaining written into the test, and compared it with the same
-subtraction; the jitter check asked whether 30 is more than 60 (test-bench
-audit, 29 Oct, finding 7). They are in test_step_clock.py now, on the real
-step's on_start() and _tick(): a night across the end of daylight saving, a
-Ready by across it, a clock moved by under and over a minute, a clock stepped
-past the start, and a control that follows the clock back.
+The wall-clock checks are in test_step_clock.py, on the real step's on_start()
+and _tick(): a night across the end of daylight saving, a Ready by across it, a
+clock moved by under and over a minute, a clock stepped past the start, and a
+control that follows the clock back.
 """
 
 import sys

@@ -1,7 +1,7 @@
 """BrewStart after a power cut: it carries on by itself, within its promise.
 
-Scott, 30 Oct: "BrewStart should resume after an overnight power cut and
-attempt to honor the contract to have hot water ready for me."
+After an overnight power cut, BrewStart still tries to keep its promise of hot
+water ready on time.
 
 From cbpi4 4.7.7.post21 the server carries a step that was running when it
 stopped on by itself only if that step was allowed to, until a time

@@ -30,9 +30,9 @@ def test_resolve_today_future():
 
 
 def test_resolve_today_already_past_stays_today():
-    """Today means today (1.2.0.post4). Until then a passed time quietly became
-    tomorrow's, which is what Tomorrow is now for; the step refuses to act on a
-    passed time by itself (test_step_clock)."""
+    """Today means today, even once the time has passed: a passed time does not
+    quietly become tomorrow's - that is what Tomorrow is for - and the step
+    refuses to act on a passed time by itself (test_step_clock)."""
     now = datetime(2026, 10, 10, 7, 0, 0)
     start = resolve_start("Today", "06:00", now=now)
     assert start == datetime(2026, 10, 10, 6, 0, 0)
@@ -84,7 +84,7 @@ def test_resolve_date_says_what_is_missing(time_, date_, says):
 
 
 def test_resolve_blank_time_is_an_error_not_six_oclock():
-    """Until 1.2.0.post4 a blank StartTime quietly meant 06:00."""
+    """A blank StartTime is an error, not a quiet 06:00."""
     with pytest.raises(ValueError, match="The time is blank"):
         resolve_start("Today", "", now=datetime(2026, 10, 1, 5, 0))
 
@@ -133,10 +133,9 @@ def test_format_countdown():
 
 
 def test_format_start_in_english_names_the_day():
-    """English text gets an English date (Scott, 29 Oct: "If my language is
-    English, I should not see other languages"), with the weekday - so a start
-    a day later than meant stands out. Named by the plugin, not by strftime's
-    %a/%b, which follow the process's locale."""
+    """English text gets an English date, never another language's, with the
+    weekday - so a start a day later than meant stands out. Named by the
+    plugin, not by strftime's %a/%b, which follow the process's locale."""
     assert format_start(datetime(2026, 10, 11, 6, 0)) == "Sun Oct 11, 06:00"
     assert format_start(datetime(2026, 10, 30, 19, 5), "en") == "Fri Oct 30, 19:05"
     assert format_start(datetime(2026, 10, 11, 6, 0), "de") == "11.10.2026 06:00"
@@ -157,7 +156,7 @@ def test_format_start_ignores_the_process_locale(monkeypatch):
 # ----------------------------------------------------------- negative controls
 #
 # schedule.py as released in 1.2.0.post3, so the tests above are known to
-# tell the new rules from the old.
+# tell these rules from that version's.
 
 def _post3_schedule():
     import importlib.util

@@ -3,19 +3,18 @@
 Needs CraftBeerPi importable - the step subclasses CBPiStep - and is skipped
 without it.
 
-On 12 Oct this fork made the step re-check the wall clock by rebuilding its
-Timer whenever the two disagreed. The rebuild ran inside the old Timer's own
-update, and a Timer cannot be stopped from inside itself: stop() cancels the
-task and then awaits it, the await swallows the cancellation, and the old
-countdown runs on, re-detecting the same drift every second. Measured on
-23 Oct: one 100 s clock correction gave 24 "System clock changed"
-notifications, 8 "start time reached" and a countdown still running after the
-step had finished. That version, 6ef8098, is run here as the negative control.
+The negative control is 6ef8098, a step that re-checks the wall clock by
+rebuilding its Timer whenever the two disagree. The rebuild runs inside the old
+Timer's own update, and a Timer cannot be stopped from inside itself: stop()
+cancels the task and then awaits it, the await swallows the cancellation, and
+the old countdown runs on, re-detecting the same drift every second - one
+100 s clock correction gives 24 "System clock changed" notifications, 8 "start
+time reached" and a countdown still running after the step has finished.
 
 And in a simulation "the wall clock" is the simulation's: the server's one
-clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, 4f360ae, read the
-PC's clock there - planning on the PC's date and waiting real minutes for a
-start a few simulated minutes away - and is the control for that.
+clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, 4f360ae, reads
+the PC's clock there - planning on the PC's date and waiting real minutes for
+a start a few simulated minutes away - and is the control for that.
 """
 
 import asyncio
@@ -158,9 +157,10 @@ def test_autonext_no_offers_next_once_and_waits(monkeypatch):
 
 
 def test_a_time_already_past_when_the_brew_starts_waits_for_next(monkeypatch):
-    """Until 1.2.0.post4 it handed over at once - and on a Ready by profile the
-    next step heats. A time over before the brew was started is a mistake (an
-    old date, Today meant for tomorrow), so it waits, whatever AutoNext says."""
+    """A time over before the brew was started is a mistake (an old date,
+    Today meant for tomorrow), so the step waits, whatever AutoNext says:
+    handing over at once would start the next step - on a Ready by profile,
+    the heating."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
     step = step_with({"StartDate": "2026-10-23 21:00"}, cbpi)
@@ -200,13 +200,13 @@ def hlt_and_tun(hlt=64.0, tun=63.0):
     return Cbpi(unit="F", readings=readings, kettles=kettles)
 
 
-#: Scott's way (29 Oct): all the strike and sparge water heated together in
-#: the HLT. Volume is all of it.
+#: All the strike and sparge water heated together in the HLT. Volume is all
+#: of it.
 HERMS = {"StartDate": "2026-10-24 07:00", "Timing": "Ready by",
          "Heat_Kettle": "hlt", "Ready_Temp": 163, "Volume": 23, "Volume_Unit": "gal",
          "Heater_Watts": 5346}
 
-#: Settings an older form asked for and saved, which no longer change the plan.
+#: Settings an older form asked for and saved, which do not change the plan.
 NO_LONGER_ASKED = {"Strike_Kettle": "mt", "Strike_Volume": 8, "Efficiency_Pct": 50,
                    "Margin_Minutes": 60, "Language": "Deutsch"}
 
@@ -267,9 +267,9 @@ def test_a_stale_reading_is_not_planned_from(monkeypatch):
 
 
 def test_campden_reminder_comes_when_the_step_is_saved(monkeypatch):
-    """Scott, 29 Oct: remind "when setting the BrewStart setting - or just after
-    clicking okay/save". The dose is for all the water, and the brew's start
-    says nothing more about it."""
+    """The Campden reminder comes when the step is saved, which is when the
+    water is drawn. The dose is for all the water, and the brew's start says
+    nothing more about it."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     quiet = hlt_and_tun()
     asyncio.run(step_with(HERMS, quiet).on_props_saved())
@@ -372,12 +372,12 @@ def test_control_returning_from_run_does_not_hand_over(monkeypatch):
 
 # ----------------------------------------------------------- the brewing clock
 #
-# Scott, of the simulator: "60x should give same results 60x faster." A
-# simulation runs the server's one clock (cbpi.api.clock) at SIM_TIME_SCALE, and
-# the water heats and every other step's timer counts by it.
+# A simulation at 60x gives the same results as one at 1x, 60 times faster. It
+# runs the server's one clock (cbpi.api.clock) at SIM_TIME_SCALE, and the water
+# heats and every other step's timer counts by it.
 
-#: A day on the simulation's clock, weeks from the PC's - as on Scott's 8000 sim
-#: after a day at 60x, its charts stamped 18 Dec on 27 Oct.
+#: A day on the simulation's clock, weeks from the PC's - as on a simulator
+#: that has run for a day at 60x.
 SIM_DAY = (REAL_DATETIME.now() + timedelta(days=52)).replace(
     hour=17, minute=0, second=0, microsecond=0)
 TONIGHT = dict(HERMS, Mode="Today", StartDate="", StartTime="19:00")
@@ -533,10 +533,8 @@ def test_control_a_whole_look_late_without_the_short_last_pause(simulation, monk
 # US daylight saving ends at 02:00 on Sunday 1 Nov 2026: the clock on the wall
 # goes from 01:59:59 back to 01:00:00, and the hour after 01:00 happens twice.
 # A brewer setting up on Saturday night for Sunday morning waits across it.
-# These drive the real on_start() and _tick() through that night. They
-# replace test_wall_clock.py's checks, which ran a copy of
-# wall_clock_remaining and compared it with the same subtraction (test-bench
-# audit, 29 Oct, finding 7).
+# These drive the real on_start() and _tick() through that night, not a copy
+# of wall_clock_remaining.
 
 SAT_NIGHT = REAL_DATETIME(2026, 10, 31, 22, 0, 0)
 SUN_SIX = REAL_DATETIME(2026, 11, 1, 6, 0, 0)
