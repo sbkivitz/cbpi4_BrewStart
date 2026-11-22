@@ -176,11 +176,21 @@ def test_the_campden_dose_is_the_reminders_rounded_up_to_a_quarter_tablet():
     assert dose(Volume="") is None and dose(Volume=0) is None
 
 
-def test_a_new_step_starts_from_the_defaults_the_step_uses_for_a_blank():
+def test_a_new_step_starts_on_ready_by_and_the_defaults_the_step_uses_for_a_blank():
     form = by_label(bs.step_properties("en"))
     assert {k: form[k].default_value for k in ("Timing", "Mode", "Campden_Reminder",
                                                "AutoNext")} == \
-        {"Timing": "Start at", "Mode": "Today", "Campden_Reminder": "No", "AutoNext": "Yes"}
+        {"Timing": "Ready by", "Mode": "Today", "Campden_Reminder": "No", "AutoNext": "Yes"}
+
+
+def test_a_step_saved_without_timing_still_runs_as_start_at():
+    """Steps saved before Timing existed meant Start at; the form's new default mustn't change them."""
+    step = step_with({"StartDate": "2026-10-24 06:00"}, Cbpi())
+    step._read_props()
+    assert step.ready_by is False
+    step = step_with({"StartDate": "2026-10-24 06:00", "Timing": "Ready by"}, Cbpi())
+    step._read_props()
+    assert step.ready_by is True
 
 
 def test_ready_by_always_goes_on_whatever_autonext_says(monkeypatch):

@@ -107,8 +107,11 @@ def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
         return (text + " " + says(fmt)).strip()
 
     return [
+        # A new step starts on Ready by, the one the brewery uses. A step saved
+        # with no Timing at all still runs as Start at (see _read_props): that is
+        # what it meant before Timing existed.
         _field(Property.Select(label="Timing", options=[TIMING_START, TIMING_READY],
-                               default_value=TIMING_START, description=says("timing")),
+                               default_value=TIMING_READY, description=says("timing")),
                name("timing")),
         _field(Property.Select(label="Mode", options=list(MODES), default_value=MODE_TODAY,
                                description=says("mode")),

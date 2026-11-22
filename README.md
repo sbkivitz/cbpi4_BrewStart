@@ -143,6 +143,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post9** – A new step's form starts on **Ready by**, not Start at. A step saved with no Timing at all still runs as Start at, as it did before Timing existed.
 * **1.2.0.post8** – A **Grain temperature** setting beside Water volume (`Grain_Temp`), blank by default, for grain that spends the night away from the boil kettle; CraftBeerPi's strike water helper reads it, and BrewStart itself doesn't. `campden_dose()` gives the Campden tablets for the water volume, rounded as the reminder rounds them, for the same helper to show.
 * **1.2.0.post7** – Comments describe the code. No change in behaviour.
 * **1.2.0.post6** – Comments describe the code. No change in behaviour.
