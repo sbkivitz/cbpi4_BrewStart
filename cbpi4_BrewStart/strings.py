@@ -134,6 +134,7 @@ MESSAGES = {
         "name_ready_temp": "Temperature",
         "name_volume": "Water volume",
         "name_volume_unit": "Volume unit",
+        "name_grain_temp": "Grain temperature",
         "name_heater_watts": "Element power",
         "name_campden": "Campden reminder",
         "name_notify_before": "Heads-up",
@@ -155,6 +156,11 @@ MESSAGES = {
         "prop_ready_temp": "How hot the water must be by the time.",
         "prop_volume": "All the water in the kettle. Also sets the Campden dose.",
         "prop_volume_unit": "Blank: gallons with °F, litres with °C.",
+        "prop_grain_temp": (
+            "The grain's temperature, if it spends the night somewhere other "
+            "than with the boil kettle. Leave blank to use the boil kettle's "
+            "probe."
+        ),
         "prop_heater_watts": "Volts × amps, measured if you can.",
         "prop_campden": (
             "Yes: saving this step shows the Campden dose for the water volume "
@@ -291,6 +297,7 @@ MESSAGES = {
         "name_ready_temp": "Temperatur",
         "name_volume": "Wassermenge",
         "name_volume_unit": "Mengeneinheit",
+        "name_grain_temp": "Malztemperatur",
         "name_heater_watts": "Heizleistung",
         "name_campden": "Campden-Erinnerung",
         "name_notify_before": "Vorwarnung",
@@ -317,6 +324,10 @@ MESSAGES = {
             "Das ganze Wasser im Kessel. Bestimmt auch die Campden-Dosis."
         ),
         "prop_volume_unit": "Leer: Gallonen bei °F, Liter bei °C.",
+        "prop_grain_temp": (
+            "Die Temperatur des Malzes, wenn es die Nacht nicht beim Sudkessel "
+            "verbringt. Leer lassen, dann gilt der Fühler des Sudkessels."
+        ),
         "prop_heater_watts": "Volt × Ampere, gemessen wenn möglich.",
         "prop_campden": (
             "Yes: beim Speichern dieses Steps erscheint die Campden-Dosis für "

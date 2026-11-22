@@ -129,6 +129,9 @@ def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
         _field(Property.Select(label="Volume_Unit", options=["gal", "L"],
                                description=says("volume_unit")),
                name("volume_unit"), FOR_THE_WATER),
+        _field(Property.Number(label="Grain_Temp", configurable=True, unit=degrees(temp_unit),
+                               description=says("grain_temp")),
+               name("grain_temp"), FOR_THE_WATER),
         _field(Property.Number(label="Heater_Watts", configurable=True, unit="W",
                                description=says("heater_watts")),
                name("heater_watts"), ONLY_FOR_READY_BY),
@@ -459,6 +462,20 @@ class BrewStart(CBPiStep):
               volume=volume_label(volume, volume_unit, unit)),
             NotificationType.INFO,
         )
+
+    def campden_dose(self):
+        """The Campden tablets for the water volume, rounded up to a quarter
+        tablet as the reminder's message rounds them; None when the reminder is
+        off or the volume isn't usable. CraftBeerPi's strike water helper shows
+        it beside the HLT's water, which it can change on brew day."""
+        if (self.props.get("Campden_Reminder", None) or "No") != "Yes":
+            return None
+        try:
+            water_l = litres(self.props.get("Volume", None), self.props.get("Volume_Unit", None),
+                             self.get_config_value("TEMP_UNIT", "C"))
+        except ValueError:
+            return None
+        return campden_tablets(water_l)
 
     def _settings_problem(self, now):
         """What would stop these settings starting as meant, or None.

@@ -54,7 +54,7 @@ def by_label(props):
 def test_the_form_asks_only_for_what_applies_when_the_hlt_heats_all_the_water():
     assert labels(bs.step_properties("en")) == [
         "Timing", "Mode", "StartDate", "StartTime", "Heat_Kettle", "Ready_Temp",
-        "Volume", "Volume_Unit", "Heater_Watts", "Campden_Reminder", "NotifyBefore",
+        "Volume", "Volume_Unit", "Grain_Temp", "Heater_Watts", "Campden_Reminder", "NotifyBefore",
         "AutoNext"]
 
 
@@ -82,7 +82,7 @@ def test_fields_are_shown_only_where_they_apply():
     assert form["StartDate"].show_if == {"Mode": ["Date", "DateTime"]}
     for label in ("Heat_Kettle", "Ready_Temp", "Heater_Watts"):
         assert form[label].show_if == {"Timing": "Ready by"}, label
-    for label in ("Volume", "Volume_Unit"):  # the Campden dose needs the volume too
+    for label in ("Volume", "Volume_Unit", "Grain_Temp"):  # shown with the water: the Campden dose needs the volume too
         assert form[label].show_if == [{"Timing": "Ready by"}, {"Campden_Reminder": "Yes"}]
     # Ready by always goes on by itself, so the choice is only offered for Start at.
     assert form["AutoNext"].show_if == {"Timing": ["", "Start at"]}
@@ -141,14 +141,39 @@ def test_every_field_is_named_in_words():
             (p.label, p.display_label)
     assert [p.display_label for p in bs.step_properties("en")] == [
         "Timing", "Day", "Date", "Time", "Kettle", "Temperature", "Water volume",
-        "Volume unit", "Element power", "Campden reminder", "Heads-up", "Go on by itself"]
+        "Volume unit", "Grain temperature", "Element power", "Campden reminder", "Heads-up",
+        "Go on by itself"]
 
 
 def test_numbers_carry_their_units():
     fahrenheit = by_label(bs.step_properties("en", "F"))
     assert (fahrenheit["Ready_Temp"].unit, fahrenheit["Heater_Watts"].unit,
-            fahrenheit["NotifyBefore"].unit) == ("°F", "W", "min")
+            fahrenheit["NotifyBefore"].unit, fahrenheit["Grain_Temp"].unit) == ("°F", "W", "min", "°F")
     assert by_label(bs.step_properties("en"))["Ready_Temp"].unit == "°C"
+    assert by_label(bs.step_properties("en"))["Grain_Temp"].unit == "°C"
+
+
+def test_the_grain_temperature_says_when_to_give_it_and_starts_blank():
+    english = by_label(bs.step_properties("en", "F"))["Grain_Temp"]
+    assert english.description == ("The grain's temperature, if it spends the night somewhere other than "
+                                   "with the boil kettle. Leave blank to use the boil kettle's probe.")
+    assert getattr(english, "default_value", None) in (None, "")
+    german = by_label(bs.step_properties("de", "C"))["Grain_Temp"]
+    assert (german.display_label, german.unit) == ("Malztemperatur", "°C")
+    assert "Sudkessel" in german.description and GERMAN.search(german.description)
+
+
+def test_the_campden_dose_is_the_reminders_rounded_up_to_a_quarter_tablet():
+    """What CraftBeerPi's strike water helper shows beside the HLT's water: the reminder's own figure."""
+    def dose(**props):
+        return step_with(dict({"Campden_Reminder": "Yes", "Volume_Unit": "gal"}, **props), Cbpi()).campden_dose()
+
+    assert dose(Volume=15.0) == 0.75
+    assert dose(Volume=15.1) == 1.0
+    assert dose(Volume=20) == 1.0
+    assert dose(Volume=56.7, Volume_Unit="L") == 0.75
+    assert dose(Volume=15.0, Campden_Reminder="No") is None
+    assert dose(Volume="") is None and dose(Volume=0) is None
 
 
 def test_a_new_step_starts_from_the_defaults_the_step_uses_for_a_blank():
