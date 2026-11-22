@@ -71,7 +71,7 @@ With `Timing = Ready by`, StartTime is when the water must be at `Ready_Temp`. T
 | **Ready_Temp** | The temperature the water must reach by StartTime. |
 | **Volume** | All the water in Heat_Kettle, strike and sparge together. |
 | **Volume_Unit** | `gal` or `L`. Blank: gal with °F, L with °C. |
-| **Grain_Temp** | The grain's temperature, if it spends the night somewhere other than with the boil kettle, in the brewery's unit. Blank: the boil kettle's probe. BrewStart doesn't use it itself: CraftBeerPi's strike water helper (4.7.7.post53 or later) works its forecast out from it. |
+| **Grain_Temp** | The grain's temperature, if it spends the night somewhere other than with the boil kettle, in the brewery's unit. Blank: the boil kettle's probe. BrewStart doesn't use it itself: CraftBeerPi's strike water helper (4.7.7.post55 or later) works its forecast out from it. |
 | **Heater_Watts** | The element's power in watts - volts × amps, measured if you can. |
 
 The plan assumes 90 % of the element's power ends up in the water (measured on a 20 gal HLT) and adds 10 spare minutes. Neither is a setting. With no usable reading the step plans as if the water were at 2 °C / 35.6 °F - so heating starts early rather than late - and says so.
