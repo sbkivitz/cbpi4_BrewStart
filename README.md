@@ -50,6 +50,23 @@ If the time you asked for is already over when you start the brew - a date left 
 
 The step keeps the date and time it worked out, so a `Tomorrow` worked out again at 05:30 on brew day, after a restart, does not mean the day after. Resetting the profile forgets it.
 
+### A new time while it waits
+
+From 1.2.0.post10. CraftBeerPi doesn't change the settings of a step that is running, and a step waiting for its time is running. So BrewStart has an action, **Change time** (`change_time`), which takes a new day and time while it waits, without stopping the brew. It is how Brew Day sets the time the night before:
+
+```
+POST /step2/action/<step id>
+{"action": "change_time", "parameter": {"Mode": "Date", "StartDate": "2026-11-23", "StartTime": "06:30"}}
+```
+
+* `Mode` is `Today`, `Tomorrow` or `Date`, and `StartDate` is for a `Date` only. A setting left out stays as it is. Timing and the water can't change this way: Timing can't change while the step waits, and CraftBeerPi's strike water helper changes the water's temperature.
+* While the step waits, it plans again as starting the brew does: from the water as it is now, with Today and Tomorrow counted from the change. Its notification says so: "Time changed, was Sun Nov 22, 07:00. Ready by Mon Nov 23, 06:30: heating starts about …". It keeps the new moment, so after a power cut it waits for the new time.
+* A ready time too soon for the heating starts the heating at once, as starting the brew would.
+* Before the brew starts, or while it is stopped, the settings are saved, and starting the brew plans from them.
+* Refused, with nothing changed: a time that has passed, a day or time that can't be read, and a step whose time has come, that waits for **Next Step**, or that has finished. Every screen is told why in an info notification, and the call answers 400.
+
+A page can tell a BrewStart that has this action from an older one by the step types CraftBeerPi sends (`GET /step2/` and `/system/`): BrewStart's `actions` include one whose `method` is `change_time`.
+
 ### After a power cut
 
 The brew carries on by itself (from 1.2.0.post5, with this fork's CraftBeerPi 4.7.7.post21 or later). If the server stops while the step waits, or while the step it handed over to is heating, that step picks up again when the server is back - with nobody pressing anything, and a notification saying so:
@@ -143,6 +160,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.2.0.post10** – **Change time** (`change_time`), an action that takes a new day and time while the step waits, so the time can change the night before without stopping the brew. The step plans again, says the new start, and keeps it for a restart. A time that has passed, or a step whose time has come, is refused with the reason in an info notification (see [A new time while it waits](#a-new-time-while-it-waits)).
 * **1.2.0.post9** – A new step's form starts on **Ready by**, not Start at. A step saved with no Timing at all still runs as Start at, as it did before Timing existed.
 * **1.2.0.post8** – A **Grain temperature** setting beside Water volume (`Grain_Temp`), blank by default, for grain that spends the night away from the boil kettle; CraftBeerPi's strike water helper reads it, and BrewStart itself doesn't. `campden_dose()` gives the Campden tablets for the water volume, rounded as the reminder rounds them, for the same helper to show.
 * **1.2.0.post7** – Comments describe the code. No change in behaviour.

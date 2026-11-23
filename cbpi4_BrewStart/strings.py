@@ -124,6 +124,29 @@ MESSAGES = {
             "Saved, but {start} has already passed. Choose a later date or "
             "time."
         ),
+        # The action change_time: a new day and time, also while the step waits.
+        "action_change_time": "Change time",
+        "prop_change_mode": (
+            "Today and Tomorrow count from the change, as from starting the "
+            "brew; Date: a day you pick."
+        ),
+        "prop_change_date": "With Date: the day.",
+        "notify_time_changed": "Time changed, was {was}. {message}",
+        "change_finished": "BrewStart has finished, so its time can't change now.",
+        "change_arrived": "BrewStart's time has come ({start}), so it can't change now.",
+        "change_waiting_next": (
+            "BrewStart is waiting for Next Step, so its time can't change now: "
+            "stop the brew, change it, then start it again."
+        ),
+        "change_passed_today": (
+            "{start} has already passed, so BrewStart's time didn't change. For "
+            "tomorrow morning, choose Tomorrow."
+        ),
+        "change_passed": (
+            "{start} has already passed, so BrewStart's time didn't change. "
+            "Choose a later day or time."
+        ),
+        "change_problem": "BrewStart's time didn't change: {error}",
         # The step form. The labels are the saved settings' names and cannot
         # change; name_* is what the form shows instead, prop_* the line under.
         "name_timing": "Timing",
@@ -289,6 +312,28 @@ MESSAGES = {
             "Gespeichert, aber {start} ist schon vorbei. Ein späteres Datum "
             "oder eine spätere Uhrzeit wählen."
         ),
+        "action_change_time": "Zeit ändern",
+        "prop_change_mode": (
+            "Today (heute) und Tomorrow (morgen) zählen ab der Änderung, wie ab "
+            "dem Start des Brauvorgangs; Date: ein gewähltes Datum."
+        ),
+        "prop_change_date": "Bei Date: der Tag.",
+        "notify_time_changed": "Zeit geändert, vorher {was}. {message}",
+        "change_finished": "BrewStart ist fertig, seine Zeit lässt sich nicht mehr ändern.",
+        "change_arrived": "Die Zeit von BrewStart ist da ({start}), sie lässt sich nicht mehr ändern.",
+        "change_waiting_next": (
+            "BrewStart wartet auf Next Step, darum lässt sich die Zeit jetzt "
+            "nicht ändern: den Brauvorgang anhalten, ändern und wieder starten."
+        ),
+        "change_passed_today": (
+            "{start} ist schon vorbei, darum bleibt die Zeit von BrewStart. Für "
+            "morgen früh den Tag auf Tomorrow stellen."
+        ),
+        "change_passed": (
+            "{start} ist schon vorbei, darum bleibt die Zeit von BrewStart. Ein "
+            "späteres Datum oder eine spätere Uhrzeit wählen."
+        ),
+        "change_problem": "Die Zeit von BrewStart bleibt: {error}",
         "name_timing": "Zeitpunkt",
         "name_mode": "Tag",
         "name_start_date": "Datum",

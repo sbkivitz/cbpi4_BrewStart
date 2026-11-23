@@ -150,6 +150,19 @@ def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
     ]
 
 
+def change_time_parameters(language=DEFAULT_LANGUAGE):
+    """What the action change_time takes: the day and the time, named as the form names them. Not Timing, which
+    can't change while the step waits, and not the water, which the strike water box changes."""
+    return [
+        _field(Property.Select(label="Mode", options=list(MODES), description=t("prop_change_mode", language)),
+               t("name_mode", language)),
+        _field(DateProperty(label="StartDate", configurable=True, description=t("prop_change_date", language)),
+               t("name_start_date", language), ONLY_FOR_DATE),
+        _field(TimeProperty(label="StartTime", configurable=True, description=t("prop_start_time", language)),
+               t("name_start_time", language)),
+    ]
+
+
 def _simulation_clock():
     """The simulation's clock when one runs the server, else None.
 
@@ -479,6 +492,87 @@ class BrewStart(CBPiStep):
         except ValueError:
             return None
         return campden_tablets(water_l)
+
+    @action("Change time", change_time_parameters())
+    async def change_time(self, Mode=None, StartDate=None, StartTime=None, **kwargs):
+        """A new day and time, also while the step waits for it (POST /step2/action/{id}, action change_time).
+
+        CraftBeerPi refuses a running step's settings, and a step waiting for its time is running, so Brew Day sets
+        the time with this, the night before. Only the day and the time: not Timing, which can't change while the
+        step waits, and not the water, which the strike water box changes. A setting not given stays as it is.
+
+        Waiting, the step plans again as START does - from the water as it is now, with Today and Tomorrow counted
+        from now - says the new start in its notice, and keeps the new moment, so a restart waits for it. Not yet
+        started or stopped, the settings are saved, and START plans from them. A ready time too soon for the heating
+        starts the heating now, as START does.
+
+        Refused with nothing changed, the reason told to every screen as an info, for a time that has passed, a day
+        or time that can't be read, a day the form doesn't offer, and a step whose time has come, that has finished,
+        or that waits for Next Step. Raises then, so POST /step2/action/{id} answers 400.
+        """
+        self._read_props()
+        language = self.language
+        # Blank is Today, as in the form. Only a day given here must be one the form offers: one saved by an older
+        # form (DateTime, Daily) and not given stays as it is, as any setting not given does.
+        mode = (str(self.props.get("Mode", None) or MODE_TODAY).strip() or MODE_TODAY) if Mode is None \
+            else (str(Mode).strip() or MODE_TODAY)
+        start_date = str(self.props.get("StartDate", None) or "").strip() if StartDate is None \
+            else str(StartDate).strip()
+        start_time = str(self.props.get("StartTime", None) or "").strip() if StartTime is None \
+            else str(StartTime).strip()
+        step = getattr(getattr(self.cbpi, "step", None), "find_by_id", lambda _id: None)(self.id)
+        if getattr(step, "status", None) == StepState.DONE:
+            self._refuse_change(t("change_finished", language))
+        waiting = self.running is True
+        if waiting and getattr(self, "arrived", False):
+            moment = getattr(self, "target_start", None) or getattr(self, "asked_for", None)
+            self._refuse_change(t("change_arrived", language, start=self._at(moment) if moment else "?"))
+        if waiting and getattr(self, "target_start", None) is None:
+            self._refuse_change(t("change_waiting_next", language))
+        if Mode is not None and mode not in MODES:
+            self._refuse_change(t("change_problem", language, error=t("err_unknown_mode", language, mode=mode)))
+        now = brewing_now()
+        try:
+            requested = resolve_start(mode, start_time, start_date, now=now, language=language)
+            plan = self._plan(requested) if waiting and self.ready_by else None
+        except ValueError as exc:
+            self._refuse_change(t("change_problem", language, error=exc))
+        if requested <= now:
+            key = "change_passed_today" if mode == MODE_TODAY else "change_passed"
+            self._refuse_change(t(key, language, start=self._at(requested)))
+
+        self.props["Mode"] = mode
+        self.props["StartDate"] = start_date
+        self.props["StartTime"] = start_time
+        if not waiting:
+            await self.cbpi.step.save()
+            return
+        was = self.asked_for
+        self.plan = plan
+        self.ready_at = requested if plan is not None else None
+        self.target_start = plan.start if plan is not None else requested
+        self.asked_for = requested
+        self.pre_notified = False
+        self._planned_at = brewing_monotonic()
+        await self._keep(self._settings_key(mode, start_time, start_date), requested)
+        # The server may carry it on by itself after a restart until two hours after the new time.
+        await self._allow_resume(step_id=self.id)
+        logger.info("BrewStart: time changed to %s, was %s", self._at(requested), self._at(was))
+        remaining = self.wall_clock_remaining(now)
+        if remaining <= 0:
+            # Ready by with less time left than the heating needs: it starts now, as at START.
+            await self._arrive(self._due_message(now))
+            return
+        self.cbpi.notify(self.name, t("notify_time_changed", language, was=self._at(was),
+                                      message=self._scheduled_message()), NotificationType.INFO)
+        self._show(remaining)
+        await self.push_update()
+
+    def _refuse_change(self, message):
+        """change_time refused: every screen is told why, quietly, and the action endpoint answers 400."""
+        logger.info("BrewStart: time not changed - %s", message)
+        self.cbpi.notify(self.name, message, NotificationType.INFO)
+        raise ValueError(message)
 
     def _settings_problem(self, now):
         """What would stop these settings starting as meant, or None.

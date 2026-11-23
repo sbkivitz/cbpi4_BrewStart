@@ -26,7 +26,8 @@ def setup(cbpi):
     a restart. Messages read them as they go.
     """
     try:
-        from .brew_start import BrewStart, configured_language, step_properties
+        from .brew_start import BrewStart, change_time_parameters, configured_language, step_properties
+        from .strings import t
 
         language = configured_language(cbpi)
         try:
@@ -34,6 +35,9 @@ def setup(cbpi):
         except Exception:  # noqa: BLE001
             temp_unit = "C"
         BrewStart.cbpi_parameters = step_properties(language, temp_unit)
+        # The action's label and its settings' words in the same language.
+        BrewStart.change_time.key = t("action_change_time", language)
+        BrewStart.change_time.parameters = change_time_parameters(language)
         cbpi.plugin.register("BrewStart", BrewStart)
         logger.info("Registered BrewStart step (%s)", language)
     except Exception as exc:
