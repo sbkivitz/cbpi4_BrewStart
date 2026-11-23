@@ -16,17 +16,20 @@ except ImportError:  # upstream CraftBeerPi: the wall clock is the only clock
 
 try:
     from .schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY, MODES,
-                           campden_tablets, format_countdown, format_start,
-                           format_tablets, format_temp, litres, plan_ready_by,
-                           resolve_start, volume_label)
+                           campden_tablets, efficiency_fraction,
+                           efficiency_setting, format_countdown, format_percent,
+                           format_start, format_tablets, format_temp, litres,
+                           plan_ready_by, resolve_start, volume_label)
     from .strings import DEFAULT_LANGUAGE, normalise_language, t
 except ImportError:
     from cbpi4_BrewStart.schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY,
                                           MODES, campden_tablets,
-                                          format_countdown, format_start,
-                                          format_tablets, format_temp, litres,
-                                          plan_ready_by, resolve_start,
-                                          volume_label)
+                                          efficiency_fraction,
+                                          efficiency_setting,
+                                          format_countdown, format_percent,
+                                          format_start, format_tablets,
+                                          format_temp, litres, plan_ready_by,
+                                          resolve_start, volume_label)
     from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, normalise_language, t
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,11 @@ TIMING_READY = "Ready by"
 
 #: The server setting that picks the language of the step's form and messages.
 LANGUAGE_SETTING = "BREWSTART_LANGUAGE"
+
+#: The server setting with the share of the element's power that heats the
+#: water, in %: blank is the built-in schedule.HEAT_EFFICIENCY. USE on
+#: CraftBeerPi's Figures page sets it from past brews, and BACK TO blanks it.
+EFFICIENCY_SETTING = "BREWSTART_EFFICIENCY"
 
 
 def configured_language(cbpi):
@@ -457,7 +465,8 @@ class BrewStart(CBPiStep):
                  target=format_temp(self.plan.target_temp, unit),
                  heat=round(self.plan.heat_minutes),
                  strike=round(self.plan.strike_minutes),
-                 margin=round(self.plan.margin_minutes))
+                 margin=round(self.plan.margin_minutes),
+                 efficiency=self._efficiency_said())
 
     def _due_message(self, now):
         """What to say when the time has already come as the step starts."""
@@ -472,7 +481,16 @@ class BrewStart(CBPiStep):
         return t("notify_ready_late", self.language,
                  water=format_temp(self.plan.water_temp, self._unit()),
                  heat=round(self.plan.heat_minutes),
-                 eta=self._at(eta), ready=self._at(self.ready_at))
+                 eta=self._at(eta), ready=self._at(self.ready_at),
+                 efficiency=self._efficiency_said())
+
+    def _efficiency_said(self):
+        """", at 85 % from past brews" after how long the water takes, when
+        BREWSTART_EFFICIENCY is set; nothing for the built-in."""
+        fraction = efficiency_setting(self._efficiency())
+        if fraction is None:
+            return ""
+        return t("efficiency_from_past_brews", self.language, pct=format_percent(fraction))
 
     def _reached_message(self):
         if self.plan is not None:
@@ -507,6 +525,9 @@ class BrewStart(CBPiStep):
         if self._heats_itself():
             await self._start_heating(message)
             return
+        if self.plan is not None:
+            # Ready by before a strike water step on Heat_Kettle: that step heats from now.
+            self._record_heating()
         self.arrived = True
         self.summary = t("summary_ready_reached" if self.plan is not None
                          else "summary_reached", self.language)
@@ -644,6 +665,7 @@ class BrewStart(CBPiStep):
         if not self.props.get(self.HEATING_PROP, False):
             self.props[self.HEATING_PROP] = True
             await self._save()
+            self._record_heating()
         reset = getattr(self, "reset_heat_watch", None)
         if callable(reset):
             reset()
@@ -659,6 +681,74 @@ class BrewStart(CBPiStep):
             await self.cbpi.step.save()
         except Exception as exc:  # noqa: BLE001 - kept in memory either way
             logger.warning("BrewStart: could not save the step - %s", exc)
+
+    # ----------------------------------------------------------- the record, for Figures
+
+    def _record(self, series, value):
+        """One row in CraftBeerPi's logs (sensor_<series>.log), stamped now on
+        its clock, for the Figures page. Nothing on a core without
+        log_control_data, and never a fault: the brew goes on without it."""
+        write = getattr(getattr(self.cbpi, "log", None), "log_control_data", None)
+        if value is None or not callable(write):
+            return
+        try:
+            write(series, value)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("BrewStart: could not log %s - %s", series, exc)
+            return
+        self._flush_soon(series)
+
+    def _flush_soon(self, series):
+        """The row on the disk two real seconds later, rather than in the log's
+        batch until something reads it - or lost to a power cut: CraftBeerPi's
+        CSV log keeps a series' rows until its next row or a minute later, and
+        the record writes one row a brew. Real seconds, as the log's batching
+        is real time, whatever speed the brewing clock runs at."""
+        flush = getattr(getattr(self.cbpi, "log", None), "_flush_datalogger", None)
+        if not callable(flush):
+            return
+
+        async def later():
+            await asyncio.sleep(2)
+            try:
+                await flush(series)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("BrewStart: could not write %s to the disk - %s", series, exc)
+
+        try:
+            asyncio.get_running_loop().create_task(later())
+        except RuntimeError:  # no loop running: left to the log's own batching
+            pass
+
+    def _record_heating(self):
+        """What it planned, as the heating starts: the minutes for the heating,
+        the ready time (seconds on CraftBeerPi's clock), the water in litres,
+        the element's watts and the efficiency planned with. The plan is made
+        again from the water as it is now, as Heat now can come long after the
+        plan was."""
+        plan = self.plan
+        ready_at = getattr(self, "ready_at", None)
+        if ready_at is not None:
+            try:
+                plan = self._plan(ready_at)
+            except ValueError:
+                pass
+        if plan is None:
+            return
+        try:
+            water_l = litres(self.props.get("Volume", None), self.props.get("Volume_Unit", None),
+                             self._unit(), self.language)
+        except ValueError:
+            water_l = None
+        try:
+            watts = float(self.props.get("Heater_Watts", None))
+        except (TypeError, ValueError):
+            watts = None
+        self._record("brewstart.planned_min", round(plan.heat_minutes, 2))
+        self._record("brewstart.ready_by", None if ready_at is None else round(ready_at.timestamp(), 3))
+        self._record("brewstart.litres", None if water_l is None else round(water_l, 3))
+        self._record("brewstart.watts", watts)
+        self._record("brewstart.efficiency", round(efficiency_fraction(self._efficiency()), 4))
 
     def _show_heating(self):
         """The status line, heating or holding. Never "Start ..." nor "heating
@@ -682,7 +772,7 @@ class BrewStart(CBPiStep):
             if callable(watch) and water is not None:
                 watch(water, target)
             if water is not None and self._reached(water, target):
-                await self._water_ready()
+                await self._water_ready(water)
                 return
             ready_at = getattr(self, "ready_at", None)
             if not self.late_said and ready_at is not None and now >= ready_at:
@@ -701,10 +791,14 @@ class BrewStart(CBPiStep):
             return reached(water, target)
         return water >= target
 
-    async def _water_ready(self):
-        """The water reads Ready_Temp: held there, and the brewer asked to move it."""
+    async def _water_ready(self, water=None):
+        """The water reads Ready_Temp: held there, and the brewer asked to move it.
+        The first time for this brew, the reading goes in the record: its row's
+        time is when the water was ready."""
         self.asked = True
         if not self.props.get(self.ASKED_PROP, False):
+            if self.ASKED_PROP not in self.props:  # the first time: forget_wait leaves it False
+                self._record("brewstart.ready", water)
             self.props[self.ASKED_PROP] = True
             await self._save()
         self._show_heating()
@@ -956,6 +1050,7 @@ class BrewStart(CBPiStep):
                               self.get_config_value("TEMP_UNIT", "C"),
                               self.props.get("Volume", None), None,
                               volume_unit=self.props.get("Volume_Unit", None),
+                              efficiency=self._efficiency(),
                               language=self.language)
         except ValueError as exc:
             return t("saved_problem", self.language, error=exc)
@@ -1006,12 +1101,14 @@ class BrewStart(CBPiStep):
     def _plan(self, ready_at):
         """The heating plan: all the water in Heat_Kettle, from its probe.
 
-        Only what the form asks for is read: strike and sparge water are
-        heated together in the HLT, and the efficiency and spare minutes are
-        not the brewer's to set. Strike_Kettle, Strike_Volume,
-        Efficiency_Pct and Margin_Minutes saved by an older form are ignored,
-        so nothing hidden changes the plan: the built-in efficiency
-        (schedule.HEAT_EFFICIENCY) and spare minutes (DEFAULT_MARGIN_MIN) apply.
+        Only what the form asks for is read, and CraftBeerPi's
+        BREWSTART_EFFICIENCY setting: strike and sparge water are heated
+        together in the HLT, and the efficiency is the setting's, which USE on
+        the Figures page sets from past brews - blank, unreadable or out of
+        range is the built-in schedule.HEAT_EFFICIENCY. Strike_Kettle,
+        Strike_Volume, Efficiency_Pct and Margin_Minutes saved by an older form
+        are ignored, so nothing hidden in a step changes the plan: the spare
+        minutes are always DEFAULT_MARGIN_MIN.
         """
         heat = self._kettle("Heat_Kettle")
         if heat is None or not getattr(heat, "sensor", None):
@@ -1024,8 +1121,17 @@ class BrewStart(CBPiStep):
             self.props.get("Volume", None),
             self._water_temp(heat),
             volume_unit=self.props.get("Volume_Unit", None),
+            efficiency=self._efficiency(),
             language=self.language,
         )
+
+    def _efficiency(self):
+        """BREWSTART_EFFICIENCY as saved, None when blank: read for every plan,
+        so a waiting step plans with a new figure within REPLAN_INTERVAL_S."""
+        try:
+            return self.get_config_value(EFFICIENCY_SETTING, None)
+        except Exception:  # noqa: BLE001 - a server without settings: the built-in
+            return None
 
     def _replan(self):
         """Re-make the plan from the water as it is now."""

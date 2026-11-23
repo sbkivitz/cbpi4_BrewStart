@@ -272,16 +272,29 @@ def efficiency_fraction(value) -> float:
     Accepts 0.9 or 90. Blank, unreadable or out of range is HEAT_EFFICIENCY:
     above 100% is impossible, and below 10% is a typo rather than a vessel.
     """
+    fraction = efficiency_setting(value)
+    return HEAT_EFFICIENCY if fraction is None else fraction
+
+
+def efficiency_setting(value):
+    """An efficiency that was set, as a fraction (0.9 or 90 both give 0.9), or
+    None when it's blank, unreadable or out of range, so the built-in
+    HEAT_EFFICIENCY applies."""
     if value is None or str(value).strip() == "":
-        return HEAT_EFFICIENCY
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return HEAT_EFFICIENCY
+        return None
     if not math.isfinite(number):
-        return HEAT_EFFICIENCY
+        return None
     fraction = number / 100.0 if number > 1.0 else number
-    return fraction if 0.1 <= fraction <= 1.0 else HEAT_EFFICIENCY
+    return fraction if 0.1 <= fraction <= 1.0 else None
+
+
+def format_percent(fraction) -> str:
+    """0.85 as "85", 0.875 as "87.5"."""
+    return "{:g}".format(round(float(fraction) * 100, 1))
 
 
 @dataclass(frozen=True)

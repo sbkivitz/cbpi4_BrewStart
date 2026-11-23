@@ -70,14 +70,14 @@ MESSAGES = {
         "summary_ready_reached": "Heating start reached",
         "notify_ready_scheduled": (
             "Ready by {ready}: heating starts about {start}. {water} to "
-            "{target} takes about {heat} min, plus {margin} min spare."
+            "{target} takes about {heat} min{efficiency}, plus {margin} min spare."
         ),
         "notify_ready_no_reading": (
             "No usable reading from {kettle} - planning as if the water were "
             "at {assumed}, so heating starts early."
         ),
         "notify_ready_late": (
-            "Heating has to start now: from {water} it needs about {heat} min, "
+            "Heating has to start now: from {water} it needs about {heat} min{efficiency}, "
             "so the water will be ready around {eta}, after {ready}."
         ),
         "notify_ready_reached": (
@@ -87,8 +87,10 @@ MESSAGES = {
         "notify_ready_scheduled_strike": (
             "Ready by {ready}: heating starts about {start}. {water} to "
             "{target} takes about {heat} min, {strike} of them for the strike "
-            "water, plus {margin} min spare."
+            "water{efficiency}, plus {margin} min spare."
         ),
+        # After how long the water takes, when BREWSTART_EFFICIENCY is set.
+        "efficiency_from_past_brews": ", at {pct} % from past brews",
         "notify_campden": (
             "Campden: {tablets} tablet(s) for {volume} of brewing water - 1 per "
             "20 gal / 75 L. Crush it and stir it in; it clears chlorine and "
@@ -255,6 +257,10 @@ MESSAGES = {
             "Language of BrewStart's settings and messages. The step form "
             "shows a change after a restart."
         ),
+        "setting_efficiency": (
+            "The share of the HLT element's power that heats the water, in %. "
+            "Blank: the built-in 90 %. USE on Figures sets it from past brews."
+        ),
     },
     "de": {
         "err_time_missing": "Die Uhrzeit ist leer - bitte setzen",
@@ -297,14 +303,14 @@ MESSAGES = {
         "summary_ready_reached": "Heizbeginn erreicht",
         "notify_ready_scheduled": (
             "Fertig um {ready}: Heizbeginn ca. {start}. {water} auf {target} "
-            "dauert ca. {heat} min, plus {margin} min Reserve."
+            "dauert ca. {heat} min{efficiency}, plus {margin} min Reserve."
         ),
         "notify_ready_no_reading": (
             "Kein gültiger Messwert von {kettle} - geplant, als hätte das "
             "Wasser {assumed}; der Heizbeginn ist daher früher."
         ),
         "notify_ready_late": (
-            "Heizen muss jetzt beginnen: ab {water} dauert es ca. {heat} min, "
+            "Heizen muss jetzt beginnen: ab {water} dauert es ca. {heat} min{efficiency}, "
             "das Wasser ist also gegen {eta} fertig, nach {ready}."
         ),
         "notify_ready_reached": (
@@ -313,9 +319,10 @@ MESSAGES = {
         "notify_prewarn_ready": "Heizbeginn in {countdown}",
         "notify_ready_scheduled_strike": (
             "Fertig um {ready}: Heizbeginn ca. {start}. {water} auf {target} "
-            "dauert ca. {heat} min, davon {strike} für das Einmaischwasser, "
+            "dauert ca. {heat} min, davon {strike} für das Einmaischwasser{efficiency}, "
             "plus {margin} min Reserve."
         ),
+        "efficiency_from_past_brews": ", bei {pct} % aus früheren Suden",
         "notify_campden": (
             "Campden: {tablets} Tablette(n) für {volume} Brauwasser - 1 pro "
             "75 L / 20 gal. Zerdrücken und einrühren; sie neutralisiert Chlor "
@@ -481,6 +488,11 @@ MESSAGES = {
         "setting_language": (
             "Sprache der Einstellungen und Meldungen von BrewStart. Das "
             "Step-Formular zeigt eine Änderung nach einem Neustart."
+        ),
+        "setting_efficiency": (
+            "Der Anteil der Leistung des HLT-Heizstabs, der das Wasser erwärmt, "
+            "in %. Leer: die eingebauten 90 %. USE auf Figures setzt ihn aus "
+            "früheren Suden."
         ),
     },
 }

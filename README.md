@@ -92,7 +92,7 @@ With `Timing = Ready by`, StartTime is when the water must be at `Ready_Temp`. T
 | **Grain_Temp** | The grain's temperature, if it spends the night somewhere other than with the boil kettle, in the brewery's unit. Blank: the boil kettle's probe. BrewStart doesn't use it itself: CraftBeerPi's strike water helper (4.7.7.post55 or later) works its forecast out from it. |
 | **Heater_Watts** | The element's power in watts - volts × amps, measured if you can. |
 
-The plan assumes 90 % of the element's power ends up in the water (measured on a 20 gal HLT) and adds 10 spare minutes. Neither is a setting. With no usable reading the step plans as if the water were at 2 °C / 35.6 °F - so heating starts early rather than late - and says so.
+The plan assumes 90 % of the element's power ends up in the water (measured on a 20 gal HLT) and adds 10 spare minutes. From 1.3.0.post3 the 90 % is CraftBeerPi's `BREWSTART_EFFICIENCY` setting when it's filled in (see [Efficiency from past brews](#efficiency-from-past-brews)); the spare minutes are not a setting. With no usable reading the step plans as if the water were at 2 °C / 35.6 °F - so heating starts early rather than late - and says so.
 
 In a simulation (cbpi4-simvessel, `SIM_TIME_SCALE`) the times are on the simulation's clock, which the water heats by: at 60× the heating start comes 60 times as fast.
 
@@ -131,6 +131,30 @@ The forms and messages are in one language, chosen in **Settings** under `BREWST
 ### Times of day
 
 From 1.3.0.post2 BrewStart writes times of day as CraftBeerPi's `CLOCK_FORMAT` setting says (CraftBeerPi 4.7.7.post60 or later): 12-hour, `Sat Nov 21, 7:00 AM`, or 24-hour, `Sat Nov 21, 07:00`; in German `21.11.2026 7:00 AM` or `21.11.2026 07:00`. That's in its notifications, its status line and the reasons it gives. A change shows at once. The setting missing, blank or anything else is 24-hour, as on an older CraftBeerPi. The time you type stays `HH:MM`, 24-hour, and durations (`8h 56m 10s to go`, `about 27 min`) don't change.
+
+### Efficiency from past brews
+
+From 1.3.0.post3 BrewStart adds a setting, `BREWSTART_EFFICIENCY`: "The share of the HLT element's power that heats the water, in %. Blank: the built-in 90 %. USE on Figures sets it from past brews." It's blank at first, and a value already saved is kept when BrewStart starts.
+
+* A Ready by plans the heating with it, 10 to 100 % (`85`, or `0.85`). Blank, unreadable or out of range is the built-in 90 %.
+* **USE** on CraftBeerPi's Figures page sets it from what past brews measured, and **BACK TO** blanks it. A BrewStart that's waiting plans again with the new figure within a minute.
+* When it's filled in, BrewStart says so wherever it says how long the water takes: "66.0 °F to 152.0 °F takes about 47 min, at 85 % from past brews, plus 10 min spare."
+* It can be typed in **Settings** too, on any CraftBeerPi.
+
+### What BrewStart records for Figures
+
+From 1.3.0.post3 a Ready by writes what it planned, and when the water was ready, into CraftBeerPi's logs (`cbpi.log.log_control_data`, which writes `logs/sensor_<name>.log`), each row stamped on CraftBeerPi's clock:
+
+| Name | When | Value |
+|------|------|-------|
+| `brewstart.planned_min` | as the heating starts | the minutes planned for heating, from the water then |
+| `brewstart.ready_by` | as the heating starts | the ready time, in seconds on CraftBeerPi's clock |
+| `brewstart.litres` | as the heating starts | the water, in litres |
+| `brewstart.watts` | as the heating starts | Heater_Watts |
+| `brewstart.efficiency` | as the heating starts | the efficiency planned with, as a fraction (0.9 built in) |
+| `brewstart.ready` | the first time the water reads Ready_Temp | the water's reading; the row's time is when it was ready |
+
+"As the heating starts" is once a brew: BrewStart switching Heat_Kettle's AUTO on, or Heat now, or, before a recipe's own strike water step on Heat_Kettle, handing over to it. Nothing is written again after a Stop and Start, or a restart, or when USE changes Ready_Temp and the question is asked again. CraftBeerPi's CSV log keeps a series' rows in memory until its next row or a minute later, so BrewStart has each row written to the disk two seconds after it. On a CraftBeerPi without `log_control_data` nothing is written, and the brew goes on.
 
 ## Step status as an actor (Mash / Boil / Whirlpool)
 
@@ -178,6 +202,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.3.0.post3** – For CraftBeerPi's Figures page. A new setting, `BREWSTART_EFFICIENCY`, in %: blank is the built-in 90 %, and USE on Figures sets it from past brews. A Ready by plans with it, a waiting one within a minute of a change, and says "at 85 % from past brews" when it's filled in. A Ready by records what it planned as the heating starts (`brewstart.planned_min`, `.ready_by`, `.litres`, `.watts`, `.efficiency`) and the reading the first time the water reads Ready_Temp (`brewstart.ready`), in CraftBeerPi's logs. See [Efficiency from past brews](#efficiency-from-past-brews) and [What BrewStart records for Figures](#what-brewstart-records-for-figures).
 * **1.3.0.post2** – Times of day follow CraftBeerPi's `CLOCK_FORMAT` (4.7.7.post60): `Sat Nov 21, 7:00 AM` in 12-hour, `Sat Nov 21, 07:00` in 24-hour as before, and `21.11.2026 7:00 AM` in German - in the notifications, the status line and the reasons for a refused change. Missing or anything but `12-hour` is 24-hour. The status line keeps its shape, so Brew Day still reads a waiting BrewStart's heating start from it. Durations and the typed `HH:MM` don't change (see [Times of day](#times-of-day)).
 * **1.3.0.post1** – **Ready by heats the HLT itself.** Before, Ready by handed over to the next step by itself at the heating start, and only planned from Ready_Temp: before a MashIn on the mash tun, that started the mash tun's step - its pump on in an empty tun, heating to the mash-in temperature. Now, at the heating start, BrewStart sets Heat_Kettle's target to Ready_Temp and switches its AUTO on; once the water reads it, holds it and asks "Move the strike water to the Mash Tun, then press Next"; and moves on only on Next, switching Heat_Kettle's AUTO off before the next step starts (Stop switches it off too). It says when the water is late, warns when heating stalls, carries on heating or holding after a restart without asking twice, and a time already passed offers **Heat now** instead of Next Step. `change_target` and `forget_wait` let CraftBeerPi's strike water helper (4.7.7.post61) take it as the strike water step for USE and BACK TO. Once heating has begun, `change_time` moves only the ready time. Before a MashIn on Heat_Kettle (a recipe made for an older BrewStart) it hands over at the heating start as before. See [Heating, holding, and moving the strike water](#heating-holding-and-moving-the-strike-water-130post1).
 * **1.2.0.post10** – **Change time** (`change_time`), an action that takes a new day and time while the step waits, so the time can change the night before without stopping the brew. The step plans again, says the new start, and keeps it for a restart. A time that has passed, or a step whose time has come, is refused with the reason in an info notification (see [A new time while it waits](#a-new-time-while-it-waits)).

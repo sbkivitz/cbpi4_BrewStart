@@ -49,7 +49,7 @@ def setup(cbpi):
 
         cbpi.plugin.register("BrewStartSettings", BrewStartSettings)
     except Exception as exc:  # noqa: BLE001 - the step works without it
-        logger.exception("Could not add BrewStart's language setting: %s", exc)
+        logger.exception("Could not add BrewStart's settings: %s", exc)
 
     try:
         from .step_status_actor import (
