@@ -46,8 +46,46 @@ REAL_DATETIME = datetime
 
 class Kettle:
     def __init__(self, name, sensor):
+        self.id = None
         self.name = name
         self.sensor = sensor
+        self.target_temp = 0
+        self.instance = None    # its logic: AUTO off
+
+
+class Kettles:
+    """The server's kettle controller, as far as BrewStart reaches into it: a
+    kettle by id, its target, and its AUTO on and off (BrewStart 1.3.0.post1 heats
+    Heat_Kettle itself). `calls` is what it was asked, in order."""
+
+    def __init__(self, kettles):
+        self.kettles = kettles
+        for kettle_id, kettle in kettles.items():
+            if getattr(kettle, "id", None) is None:
+                kettle.id = kettle_id
+        self.calls = []
+
+    def find_by_id(self, kettle_id):
+        return self.kettles.get(kettle_id)
+
+    async def set_target_temp(self, kettle_id, temp):
+        self.calls.append(("target", kettle_id, temp))
+        self.kettles[kettle_id].target_temp = temp
+
+    async def start(self, kettle_id):
+        self.calls.append(("on", kettle_id))
+        self.kettles[kettle_id].instance = types.SimpleNamespace(state=True, running=True)
+
+    async def stop(self, kettle_id):
+        self.calls.append(("off", kettle_id))
+        instance = self.kettles[kettle_id].instance
+        if instance is not None:
+            instance.state = instance.running = False
+
+    def auto(self, kettle_id):
+        """(AUTO on, target) of a kettle."""
+        kettle = self.kettles[kettle_id]
+        return bool(getattr(kettle.instance, "state", False)), kettle.target_temp
 
 
 class Cbpi:
@@ -66,7 +104,7 @@ class Cbpi:
             self.saves += 1
 
         self.step = types.SimpleNamespace(push_udpate=lambda: None, save=save)
-        self.kettle = types.SimpleNamespace(find_by_id=lambda i: kettles.get(i))
+        self.kettle = Kettles(kettles)
         self.sensor = types.SimpleNamespace(
             get_sensor_value=lambda i: self.readings.get(i))
 
@@ -575,13 +613,14 @@ def on_the_wall(monkeypatch, wall, module=bs):
 def through_the_night(step, wall, every=30, until=10 * 3600):
     """The real on_start(), then the real _tick() every `every` real seconds.
 
-    Returns (real seconds, the wall clock) at the first hand-over, or
-    (None, None).
+    Returns (real seconds, the wall clock) at the first hand-over - or, for a
+    Ready by that heats its kettle itself (1.3.0.post1), the moment it starts heating
+    it - or (None, None).
     """
     async def go():
         await step.on_start()
         while wall.elapsed <= until:
-            if await step._tick():
+            if await step._tick() or getattr(step, "heating", False):
                 return wall.elapsed, wall.now()
             wall.elapsed += every
         return None, None

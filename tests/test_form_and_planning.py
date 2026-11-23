@@ -84,7 +84,7 @@ def test_fields_are_shown_only_where_they_apply():
         assert form[label].show_if == {"Timing": "Ready by"}, label
     for label in ("Volume", "Volume_Unit", "Grain_Temp"):  # shown with the water: the Campden dose needs the volume too
         assert form[label].show_if == [{"Timing": "Ready by"}, {"Campden_Reminder": "Yes"}]
-    # Ready by always goes on by itself, so the choice is only offered for Start at.
+    # AutoNext is for Start at only: Ready by heats the water and asks, and only Next moves it on.
     assert form["AutoNext"].show_if == {"Timing": ["", "Start at"]}
     for label in ("Mode", "StartTime", "Timing", "Campden_Reminder", "NotifyBefore"):
         assert getattr(form[label], "show_if", None) is None, label
@@ -193,9 +193,11 @@ def test_a_step_saved_without_timing_still_runs_as_start_at():
     assert step.ready_by is True
 
 
-def test_ready_by_always_goes_on_whatever_autonext_says(monkeypatch):
+def test_ready_by_heats_at_its_start_whatever_autonext_says(monkeypatch):
     """With AutoNext No it waited for a click at the heating start, so the water
-    was never heated; the rig page carried a bold warning instead."""
+    was never heated; the rig page carried a bold warning instead. From 1.3.0.post1 it
+    heats the HLT itself then, whatever AutoNext says - its target Ready_Temp,
+    its AUTO on - and stays: only the brewer's Next moves it on."""
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = hlt_and_tun()
     step = step_with(dict(HERMS, AutoNext="No"), cbpi)
@@ -204,20 +206,23 @@ def test_ready_by_always_goes_on_whatever_autonext_says(monkeypatch):
         await step.on_start()
         return await step._tick(step.target_start, 1.0)
 
-    assert asyncio.run(go()) is True
+    assert asyncio.run(go()) is False
+    assert cbpi.kettle.auto("hlt") == (True, 163)
     assert not [m for m, action in cbpi.notes if action], cbpi.notes
 
 
 def test_control_post3_ready_by_with_autonext_no_never_heated(monkeypatch):
     old = load_control(POST3)
     monkeypatch.setattr(old, "datetime", frozen(NIGHT))
-    step = step_with(dict(HERMS, AutoNext="No"), hlt_and_tun(), module=old)
+    cbpi = hlt_and_tun()
+    step = step_with(dict(HERMS, AutoNext="No"), cbpi, module=old)
 
     async def go():
         await step.on_start()
         return await step._tick(step.target_start, 1.0)
 
     assert asyncio.run(go()) is False
+    assert cbpi.kettle.auto("hlt") == (False, 0), "post3 never heated the water"
 
 
 def saved(monkeypatch, props, at=NIGHT, cbpi=None):
@@ -420,8 +425,9 @@ def test_ready_by_resumed_too_late_to_be_on_time_heats_at_once(monkeypatch):
     late = REAL_DATETIME(2026, 10, 24, 6, 30)
     monkeypatch.setattr(bs, "datetime", frozen(late))
     again = restart(step, cbpi)
-    assert ticks(again, late, 1) == [True]
+    assert ticks(again, late, 1) == [False]       # heating, and only Next moves on
     assert again.ready_at == REAL_DATETIME(2026, 10, 24, 7, 0)
+    assert cbpi.kettle.auto("hlt") == (True, 163)
     assert cbpi.said("Heating has to start now"), cbpi.notes
 
 

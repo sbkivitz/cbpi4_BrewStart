@@ -11,7 +11,10 @@ running. So Brew Day, which sets the time the night before, calls the step's act
   the heating now, as START does; a setting not given stays as it is, a day from an older form included, and a blank
   day is Today, as in the form;
 - refused, with nothing changed and every screen told why as an info: a time that has passed, a time that can't be
-  read, a day it doesn't offer, a step whose time has come, one waiting for Next Step, and one that has finished;
+  read, a day it doesn't offer, a step whose time has come, one waiting for Next Step or Heat now, and one that has
+  finished;
+- Ready by heating its kettle itself (1.3.0.post1): once the heating has begun, a new time only changes the ready time, and
+  the heating carries on;
 - not yet started, the time is saved for START, as the form saves it;
 - its words are in German too.
 """
@@ -34,6 +37,7 @@ from cbpi.api.dataclasses import NotificationType  # noqa: E402
 from cbpi.api.decorator import resolve_action  # noqa: E402
 from cbpi.api.step import StepState  # noqa: E402
 from cbpi4_BrewStart.strings import MESSAGES  # noqa: E402
+from test_step_clock import Kettle, Kettles  # noqa: E402
 
 REAL_DATETIME = datetime
 NIGHT = REAL_DATETIME(2026, 10, 23, 22, 0, 0)          # Friday night
@@ -45,12 +49,6 @@ READY_BY = {"Mode": "Date", "StartDate": "2026-10-24", "StartTime": "07:00", "Ti
             "Heater_Watts": 5346, "NotifyBefore": 0}
 START_AT = {"Mode": "Date", "StartDate": "2026-10-24", "StartTime": "06:00", "Timing": "Start at",
             "AutoNext": "Yes", "NotifyBefore": 0}
-
-
-class Kettle:
-    def __init__(self, name, sensor):
-        self.name = name
-        self.sensor = sensor
 
 
 class Steps:
@@ -83,7 +81,7 @@ class Cbpi:
         self.config = types.SimpleNamespace(get=lambda k, default=None: settings.get(k, default))
         kettles = {"hlt": Kettle("HLT", "hlt-probe")}
         readings = {"hlt-probe": {"value": 60.0, "age": 1, "max_age": 30}}
-        self.kettle = types.SimpleNamespace(find_by_id=lambda i: kettles.get(i))
+        self.kettle = Kettles(kettles)
         self.sensor = types.SimpleNamespace(get_sensor_value=lambda i: readings.get(i))
 
     def notify(self, title, message, type=None, *args, **kwargs):
@@ -152,7 +150,7 @@ def test_the_action_is_declared_with_the_day_and_the_time():
 def test_its_words_are_in_german_too():
     keys = [k for k in MESSAGES["en"] if k.startswith(("change_", "prop_change_")) or
             k in ("action_change_time", "notify_time_changed")]
-    assert len(keys) == 10 and all(k in MESSAGES["de"] for k in keys)
+    assert len(keys) == 11 and all(k in MESSAGES["de"] for k in keys)
     assert [p.display_label for p in bs.change_time_parameters("de")] == ["Tag", "Datum", "Uhrzeit"]
 
 
@@ -207,6 +205,7 @@ def test_a_ready_time_too_soon_for_the_heating_starts_it_now(monkeypatch):
     step, _ = waiting(monkeypatch)
     change(step, Mode="Date", StartDate="2026-10-23", StartTime="22:30")
     assert step.arrived is True and step.asked_for == NIGHT + timedelta(minutes=30)
+    assert step.heating is True and step.cbpi.kettle.auto("hlt") == (True, 152)
 
 
 def test_a_restart_waits_for_the_changed_time(monkeypatch):
@@ -242,18 +241,46 @@ def test_a_day_it_doesnt_offer_is_refused(monkeypatch):
 
 
 def test_refused_once_its_time_has_come(monkeypatch):
-    step, wall = waiting(monkeypatch)
+    step, wall = waiting(monkeypatch, dict(START_AT, AutoNext="No"))
     wall.at = step.target_start + timedelta(seconds=1)
-    asyncio.run(step._tick(wall.at, 100000.0))
+    assert asyncio.run(step._tick(wall.at, 100000.0)) is False   # waits for Next Step
     assert step.arrived is True
     assert refused(step, StartTime="08:00").startswith("BrewStart's time has come (")
 
 
+def test_once_it_heats_a_new_time_only_moves_the_ready_time(monkeypatch):
+    """Ready by heating its kettle itself: the heating carries on, as it is."""
+    step, wall = waiting(monkeypatch)
+    wall.at = step.target_start + timedelta(seconds=1)
+    assert asyncio.run(step._tick(wall.at, 100000.0)) is False
+    assert step.heating is True and step.cbpi.kettle.auto("hlt") == (True, 152)
+    calls = list(step.cbpi.kettle.calls)
+    step.cbpi.notes.clear()
+    change(step, StartTime="07:30")
+    assert step.ready_at == step.asked_for == READY + timedelta(minutes=30)
+    assert step.heating is True and step.cbpi.kettle.calls == calls, "the heating was touched"
+    assert step.cbpi.notes == [("Time changed, was Sat Oct 24, 07:00. Ready by Sat Oct 24, 07:30: the HLT carries "
+                                "on heating to 152.0 °F.", NotificationType.INFO)]
+    assert step.cbpi.step.allowed["bs"][0] == (READY + timedelta(hours=2, minutes=30)).timestamp()
+    assert step.props[bs.BrewStart.PLANNED_PROP].endswith((READY + timedelta(minutes=30)).isoformat())
+    assert step.summary == "Heating to 152.0 °F · ready by Sat Oct 24, 07:30"
+    assert refused(step, Mode="Date", StartDate="2026-10-23", StartTime="21:00").startswith(
+        "Fri Oct 23, 21:00 has already passed")
+
+
 def test_refused_while_it_waits_for_next_step(monkeypatch):
-    step, _ = waiting(monkeypatch, dict(READY_BY, Mode="Date", StartDate="2026-10-23", StartTime="21:00"))
+    step, _ = waiting(monkeypatch, dict(START_AT, Mode="Date", StartDate="2026-10-23", StartTime="21:00"))
     assert step.target_start is None
     assert refused(step, Mode="Tomorrow", StartTime="07:00") == (
         "BrewStart is waiting for Next Step, so its time can't change now: stop the brew, change it, then start it "
+        "again.")
+
+
+def test_refused_while_it_waits_for_heat_now(monkeypatch):
+    step, _ = waiting(monkeypatch, dict(READY_BY, Mode="Date", StartDate="2026-10-23", StartTime="21:00"))
+    assert step.target_start is None
+    assert refused(step, Mode="Tomorrow", StartTime="07:00") == (
+        "BrewStart is waiting for Heat now, so its time can't change now: stop the brew, change it, then start it "
         "again.")
 
 

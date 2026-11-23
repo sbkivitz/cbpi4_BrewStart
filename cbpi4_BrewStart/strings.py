@@ -138,6 +138,10 @@ MESSAGES = {
             "BrewStart is waiting for Next Step, so its time can't change now: "
             "stop the brew, change it, then start it again."
         ),
+        "change_waiting_heat_now": (
+            "BrewStart is waiting for Heat now, so its time can't change now: "
+            "stop the brew, change it, then start it again."
+        ),
         "change_passed_today": (
             "{start} has already passed, so BrewStart's time didn't change. For "
             "tomorrow morning, choose Tomorrow."
@@ -147,6 +151,40 @@ MESSAGES = {
             "Choose a later day or time."
         ),
         "change_problem": "BrewStart's time didn't change: {error}",
+        # Ready by heating its kettle itself (1.3.0.post1). The status lines never start
+        # with "Start" nor say "heating from": Brew Day reads a waiting step's
+        # heating start from those words.
+        "default_mash_tun": "Mash Tun",
+        "summary_heating": "Heating to {target} · ready by {ready}",
+        "summary_heating_late": "Heating to {target} · late for {ready}",
+        "summary_water_ready": "Holding {target} · move the strike water",
+        # The strike water step's own sentence on the rig page's recipe.
+        "notify_water_ready": "Move the strike water to the {to}, then press Next",
+        "notify_water_late": (
+            "The water isn't ready by {ready}: the {kettle} reads {water}, short of {target}. BrewStart "
+            "carries on heating it, and asks you to move it once it's there."
+        ),
+        "notify_ready_time_changed": (
+            "Time changed, was {was}. Ready by {ready}: the {kettle} carries on heating to {target}."
+        ),
+        "notify_cannot_heat": (
+            "BrewStart couldn't switch the {kettle}'s AUTO on, so the water isn't heating. Check the "
+            "{kettle}'s logic on the Hardware page."
+        ),
+        "action_heat_now": "Heat now",
+        "notify_heat_now": "Heating the {kettle} to {target} now, as you asked.",
+        "notify_passed_today_heat_now": (
+            "{start} has already passed, so nothing heats by itself. Press Heat now to heat the water now - "
+            "or stop the brew, set Day to Tomorrow and start it again."
+        ),
+        "notify_passed_heat_now": (
+            "{start} has already passed, so nothing heats by itself. Press Heat now to heat the water now - "
+            "or stop the brew, choose a later date or time and start it again."
+        ),
+        "notify_too_late_heat_now": (
+            "It is now {now}, more than {hours} hours after the {asked} you set, so heating does not start by "
+            "itself. Press Heat now to start it."
+        ),
         # The step form. The labels are the saved settings' names and cannot
         # change; name_* is what the form shows instead, prop_* the line under.
         "name_timing": "Timing",
@@ -164,7 +202,8 @@ MESSAGES = {
         "name_auto_next": "Go on by itself",
         "prop_timing": (
             "Start at: the next step begins at the time. Ready by: the water is "
-            "hot by then - heating starts as early as it needs to."
+            "hot by then - BrewStart heats the kettle as early as it needs to, "
+            "holds it there and asks you to move the strike water."
         ),
         "prop_mode": "Today and Tomorrow count from when you start the brew.",
         "prop_start_date": "",
@@ -174,7 +213,8 @@ MESSAGES = {
         ),
         "prop_heat_kettle": (
             "The kettle with the element, holding all the strike and sparge "
-            "water. Its probe gives the starting temperature."
+            "water. Its probe gives the starting temperature, and BrewStart "
+            "switches its AUTO on to heat it."
         ),
         "prop_ready_temp": "How hot the water must be by the time.",
         "prop_volume": "All the water in the kettle. Also sets the Campden dose.",
@@ -325,6 +365,10 @@ MESSAGES = {
             "BrewStart wartet auf Next Step, darum lässt sich die Zeit jetzt "
             "nicht ändern: den Brauvorgang anhalten, ändern und wieder starten."
         ),
+        "change_waiting_heat_now": (
+            "BrewStart wartet auf Jetzt heizen, darum lässt sich die Zeit jetzt "
+            "nicht ändern: den Brauvorgang anhalten, ändern und wieder starten."
+        ),
         "change_passed_today": (
             "{start} ist schon vorbei, darum bleibt die Zeit von BrewStart. Für "
             "morgen früh den Tag auf Tomorrow stellen."
@@ -334,6 +378,37 @@ MESSAGES = {
             "späteres Datum oder eine spätere Uhrzeit wählen."
         ),
         "change_problem": "Die Zeit von BrewStart bleibt: {error}",
+        "default_mash_tun": "Maischbottich",
+        "summary_heating": "Heizt auf {target} · fertig bis {ready}",
+        "summary_heating_late": "Heizt auf {target} · zu spät für {ready}",
+        "summary_water_ready": "Hält {target} · Maischwasser umfüllen",
+        "notify_water_ready": "Das Maischwasser in den {to} umfüllen, dann Next drücken",
+        "notify_water_late": (
+            "Das Wasser ist bis {ready} nicht fertig: {kettle} misst {water}, Ziel {target}. BrewStart "
+            "heizt weiter und bittet ums Umfüllen, sobald es so weit ist."
+        ),
+        "notify_ready_time_changed": (
+            "Zeit geändert, vorher {was}. Fertig bis {ready}: {kettle} heizt weiter auf {target}."
+        ),
+        "notify_cannot_heat": (
+            "BrewStart konnte AUTO von {kettle} nicht einschalten, das Wasser heizt also nicht. Die Logik "
+            "von {kettle} auf der Seite Hardware prüfen."
+        ),
+        "action_heat_now": "Jetzt heizen",
+        "notify_heat_now": "{kettle} heizt jetzt auf {target}, wie gewünscht.",
+        "notify_passed_today_heat_now": (
+            "{start} ist schon vorbei, darum heizt nichts von selbst. Jetzt heizen drücken, um das Wasser "
+            "jetzt zu heizen - oder den Brauvorgang stoppen, Tag auf Tomorrow stellen und neu starten."
+        ),
+        "notify_passed_heat_now": (
+            "{start} ist schon vorbei, darum heizt nichts von selbst. Jetzt heizen drücken, um das Wasser "
+            "jetzt zu heizen - oder den Brauvorgang stoppen, ein späteres Datum oder eine spätere Uhrzeit "
+            "wählen und neu starten."
+        ),
+        "notify_too_late_heat_now": (
+            "Es ist {now}, mehr als {hours} Stunden nach dem eingestellten {asked}, darum beginnt das Heizen "
+            "nicht von selbst. Jetzt heizen drücken, um zu beginnen."
+        ),
         "name_timing": "Zeitpunkt",
         "name_mode": "Tag",
         "name_start_date": "Datum",
@@ -349,7 +424,8 @@ MESSAGES = {
         "name_auto_next": "Selbst weiter",
         "prop_timing": (
             "Start at: der nächste Step beginnt zur Uhrzeit. Ready by: das "
-            "Wasser ist dann heiß - geheizt wird so früh wie nötig."
+            "Wasser ist dann heiß - BrewStart heizt den Kessel so früh wie "
+            "nötig, hält die Temperatur und bittet ums Umfüllen."
         ),
         "prop_mode": (
             "Today (heute) und Tomorrow (morgen) zählen ab dem Start des "
@@ -362,7 +438,8 @@ MESSAGES = {
         ),
         "prop_heat_kettle": (
             "Der Kessel mit dem Heizstab und dem ganzen Einmaisch- und "
-            "Nachgusswasser. Sein Fühler gibt die Starttemperatur."
+            "Nachgusswasser. Sein Fühler gibt die Starttemperatur, und "
+            "BrewStart schaltet sein AUTO zum Heizen ein."
         ),
         "prop_ready_temp": "Wie heiß das Wasser zur Uhrzeit sein muss.",
         "prop_volume": (

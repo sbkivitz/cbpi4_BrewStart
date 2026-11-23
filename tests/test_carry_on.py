@@ -117,14 +117,18 @@ class Wall:
         monkeypatch.setattr(module, "datetime", Moved)
 
 
-def item(step_id, status):
-    return types.SimpleNamespace(id=step_id, name=step_id, status=status)
+def item(step_id, status, step_type=None, kettle=None):
+    return types.SimpleNamespace(id=step_id, name=step_id, status=status, type=step_type,
+                                 props={"Kettle": kettle} if kettle else {})
 
 
 def profile():
-    """Rig page 9b: BrewStart, the HLT's heating, the Mash Tun, the hold."""
-    return [item("bs", StepState.ACTIVE), item("hlt-heat", StepState.INITIAL),
-            item("mash-in", StepState.INITIAL), item("hold", StepState.INITIAL)]
+    """Rig page 9b: BrewStart, the HLT's heating - a strike water step, a
+    MashInStep on the HLT, to which a Ready by BrewStart hands over at the heating
+    start, as before 1.3.0.post1 - the Mash Tun, the hold."""
+    return [item("bs", StepState.ACTIVE), item("hlt-heat", StepState.INITIAL, "MashInStep", "hlt"),
+            item("mash-in", StepState.INITIAL, "MashInStep", "mt"),
+            item("hold", StepState.INITIAL, "MashStep", "mt")]
 
 
 READY_BY = {"Mode": "DateTime", "StartDate": "2026-10-24 07:00", "Timing": "Ready by",

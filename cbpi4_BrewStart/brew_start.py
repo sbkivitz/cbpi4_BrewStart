@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 import math
 import time
@@ -84,8 +85,8 @@ def step_properties(language=DEFAULT_LANGUAGE, temp_unit="C"):
     Every description is in the server's language only, never English and
     German side by side. The form asks only for what applies: the date only
     for a Date, the heating fields only for Ready by, "Go on by itself" only
-    for Start at (Ready by always goes on - waiting for a click there would
-    leave the water unheated). Strike_Kettle, Strike_Volume, Efficiency_Pct,
+    for Start at (Ready by heats the water itself and asks for it to be moved,
+    and only Next moves it on). Strike_Kettle, Strike_Volume, Efficiency_Pct,
     Margin_Minutes and Language are not asked for; see BrewStart._plan and
     configured_language.
 
@@ -206,7 +207,14 @@ class BrewStart(CBPiStep):
       step works out when heating has to start - from the water's measured
       temperature, the volumes and the element's power (schedule.py). The
       plan is re-made once a minute, so water that cools overnight moves the
-      start earlier rather than leaving the water short.
+      start earlier rather than leaving the water short. At the heating start
+      the step heats Heat_Kettle itself (1.3.0.post1): its target Ready_Temp, its
+      AUTO on. Once the water reads Ready_Temp it holds it there and asks for
+      the strike water to be moved, and only the brewer's Next moves on, with
+      Heat_Kettle's AUTO switched off first: on a HERMS the mash tun's logic
+      drives the same element. Before a MashInStep on Heat_Kettle - a recipe
+      made for an older BrewStart - it hands over at the heating start instead,
+      as it always did, and that step heats the water and asks.
 
     Why the step's own loop looks at the wall clock, with no countdown:
 
@@ -287,11 +295,52 @@ class BrewStart(CBPiStep):
     #: in the afternoon does not heat water nobody is expecting any more.
     RESUME_GRACE = timedelta(hours=2)
 
+    #: Kept with the step, underscored as PLANNED_PROP: Ready by has begun heating
+    #: Heat_Kettle - its target set, its AUTO on - and, once the water read
+    #: Ready_Temp, asked for it to be moved. So Stop and Start, or a restart, come
+    #: back to the heating or to the question, never to a second wait for the
+    #: time, and CraftBeerPi's strike water helper can tell the water is heating.
+    #: Cleared by reset().
+    HEATING_PROP = "_brewstart_heating"
+    ASKED_PROP = "_brewstart_asked"
+
+    #: The kind of the "move the water" question, for StepController.keep_step_prompt:
+    #: one at a time, taken down when the step stops or ends.
+    QUESTION_KIND = "water"
+
     #: Until on_start reads the server's setting.
     language = DEFAULT_LANGUAGE
 
     async def NextStep(self, **kwargs):
         await self._hand_over()
+
+    async def WaterMoved(self, **kwargs):
+        """Next Step on "Move the strike water to the Mash Tun, then press Next":
+        the brewer has moved the water. Only this, or the screens' NEXT, moves a
+        Ready by BrewStart on - on_stop switches Heat_Kettle's AUTO off before
+        the next step starts - and the next step is the brewer's to carry on
+        after a restart, so no permission is passed on. A button left from an
+        earlier run does nothing."""
+        if not self._is_current():
+            logger.info("BrewStart: ignoring an old answer for %s", self.id)
+            return
+        await self.next()
+
+    async def HeatNow(self, **kwargs):
+        """Heat now, on a Ready by whose time had passed: the water heats as if
+        its time had come. A button left from an earlier run does nothing."""
+        if not self._is_current() or getattr(self, "heating", False):
+            return
+        self.late_said = True  # it has passed, and the brewer knows
+        await self._start_heating(t("notify_heat_now", self.language,
+                                    kettle=self._kettle_name(),
+                                    target=format_temp(self._ready_temp() or 0, self._unit())))
+
+    def _is_current(self):
+        """This instance is the running step's, as the core's MashInStep checks."""
+        step = getattr(getattr(self.cbpi, "step", None), "find_by_id", lambda _id: None)(self.id)
+        return (step is not None and getattr(step, "instance", self) is self
+                and getattr(step, "status", None) == StepState.ACTIVE and self.running is True)
 
     async def _hand_over(self):
         """Go on to the next step, passing on permission to carry on after a
@@ -331,6 +380,12 @@ class BrewStart(CBPiStep):
                            "restart - %s", exc)
             return False
 
+    async def _allow_carrying_on(self):
+        """This step may carry on by itself after a restart until two hours
+        after the ready time now asked for: heating, or holding the water for
+        the question."""
+        return await self._allow_resume(self.id)
+
     def _past_carrying_on(self, now):
         """Too long after the time asked for to start heating by itself."""
         asked = getattr(self, "asked_for", None)
@@ -349,6 +404,12 @@ class BrewStart(CBPiStep):
         self.summary = t("summary_too_late", self.language,
                          asked=self._at(self.asked_for))
         await self.push_update()
+        if self._heats_itself():
+            # Next would move on with the water cold: offered as Heat now instead.
+            self._offer_heat_now(t("notify_too_late_heat_now", self.language, now=self._at(now),
+                                   asked=self._at(self.asked_for),
+                                   hours=round(self.RESUME_GRACE.total_seconds() / 3600)))
+            return
         self._offer_next(t("notify_too_late", self.language, now=self._at(now),
                            asked=self._at(self.asked_for),
                            hours=round(self.RESUME_GRACE.total_seconds() / 3600)),
@@ -409,8 +470,23 @@ class BrewStart(CBPiStep):
                 t("action_next_step", self.language), self.NextStep)],
         )
 
+    def _offer_heat_now(self, message):
+        """A Ready by that heats its kettle itself, whose time has passed: nothing
+        heats by itself, and the button is Heat now, not Next Step - Next would
+        move on to the mash tun with the water still cold."""
+        self.waits_for_heat_now = True
+        self.cbpi.notify(
+            self.name, message, NotificationType.WARNING,
+            action=[NotificationAction(t("action_heat_now", self.language), self.HeatNow)],
+        )
+
     async def _arrive(self, message):
-        """The time has come: hand over, or wait for Next when AutoNext is No."""
+        """The time has come: Ready by heats Heat_Kettle itself (or, before a
+        MashInStep on that kettle, hands over to it, as it heats and asks); Start
+        at hands over, or waits for Next when AutoNext is No."""
+        if self._heats_itself():
+            await self._start_heating(message)
+            return
         self.arrived = True
         self.summary = t("summary_ready_reached" if self.plan is not None
                          else "summary_reached", self.language)
@@ -432,6 +508,10 @@ class BrewStart(CBPiStep):
         self.target_start = None  # _tick: only Next moves on
         self.summary = t("summary_passed", self.language, start=self._at(requested))
         await self.push_update()
+        if self._heats_itself():
+            key = "notify_passed_today_heat_now" if mode == MODE_TODAY else "notify_passed_heat_now"
+            self._offer_heat_now(t(key, self.language, start=self._at(requested)))
+            return
         key = "notify_passed_today" if mode == MODE_TODAY else "notify_passed"
         self._offer_next(t(key, self.language, start=self._at(requested)),
                          NotificationType.WARNING, wrap=False)
@@ -445,6 +525,240 @@ class BrewStart(CBPiStep):
               assumed=format_temp(self.plan.water_temp, self._unit())),
             NotificationType.WARNING,
         )
+
+    # ----------------------------------------------------------- heating the water
+
+    def _next_on_a_kettle(self):
+        """The first step after this one in the profile that names a kettle, or None."""
+        profile = list(getattr(getattr(self.cbpi, "step", None), "profile", None) or [])
+        at = next((i for i, item in enumerate(profile) if getattr(item, "id", None) == self.id), None)
+        for item in (profile[at + 1:] if at is not None else []):
+            props = getattr(item, "props", None)
+            if props is not None and props.get("Kettle", None):
+                return item
+        return None
+
+    def _next_heats_this_kettle(self):
+        """The next step on a kettle is a MashInStep on Heat_Kettle.
+
+        A recipe made for BrewStart before 1.3.0.post1, as the rig page's step 9b has
+        it: BrewStart, then a strike water step on the HLT that heats the water,
+        holds it and asks for it to be moved itself. There BrewStart hands over
+        as the heating starts, as it always did, so the water isn't heated or
+        asked about twice. Steps on no kettle between them, a notification say,
+        don't count.
+        """
+        kettle = self.props.get("Heat_Kettle", None)
+        following = self._next_on_a_kettle()
+        return bool(kettle and following is not None and getattr(following, "type", None) == "MashInStep"
+                    and following.props.get("Kettle", None) == kettle)
+
+    def _heats_itself(self):
+        """Ready by heats Heat_Kettle itself, holds the water and asks for it to
+        be moved, unless the next step on a kettle is a MashInStep on that one."""
+        return bool(getattr(self, "ready_by", False)) and not self._next_heats_this_kettle()
+
+    def _ready_temp(self):
+        try:
+            return float(self.props.get("Ready_Temp", None))
+        except (TypeError, ValueError):
+            return None
+
+    def _kettle_name(self):
+        return getattr(self._kettle("Heat_Kettle"), "name", None) or "?"
+
+    def _next_kettle_name(self):
+        """Where the water goes: the kettle of the next step on one."""
+        following = self._next_on_a_kettle()
+        try:
+            kettle = self.get_kettle(following.props.get("Kettle", None)) if following is not None else None
+        except Exception:  # noqa: BLE001 - a deleted kettle is simply none
+            kettle = None
+        return getattr(kettle, "name", None) or t("default_mash_tun", self.language)
+
+    async def _heat(self, target):
+        """Heat_Kettle's target to `target`, and its AUTO on if it isn't: its
+        logic heats the water there and holds it. False when it can't."""
+        kettle = self._kettle("Heat_Kettle")
+        if kettle is None:
+            return False
+        self.kettle = kettle
+        try:
+            await self.cbpi.kettle.set_target_temp(kettle.id, target)
+            instance = getattr(kettle, "instance", None)
+            if instance is None or not getattr(instance, "state", False):
+                await self.cbpi.kettle.start(kettle.id)
+        except Exception as exc:  # noqa: BLE001 - said below; the step waits on
+            logger.warning("BrewStart: could not heat %s - %s", getattr(kettle, "name", "?"), exc)
+        instance = getattr(self._kettle("Heat_Kettle"), "instance", None)
+        if instance is None or not getattr(instance, "state", False):
+            self.cbpi.notify(self.name, t("notify_cannot_heat", self.language, kettle=kettle.name),
+                             NotificationType.ERROR)
+            return False
+        return True
+
+    async def _heat_off(self):
+        """Heat_Kettle's AUTO off, so the next step's logic is the only one
+        driving its element: on the rig the mash tun's PID_HERMS drives the HLT's."""
+        kettle = self._kettle("Heat_Kettle")
+        instance = getattr(kettle, "instance", None) if kettle is not None else None
+        if instance is None or not getattr(instance, "state", False):
+            return
+        try:
+            await self.cbpi.kettle.stop(kettle.id)
+            logger.info("BrewStart: %s's AUTO off", kettle.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("BrewStart: could not switch %s's AUTO off - %s", kettle.name, exc)
+
+    async def _start_heating(self, message=None, resumed=False):
+        """Ready by's time to heat: Heat_Kettle's target is Ready_Temp and its
+        AUTO on, and the step watches the water until it reads Ready_Temp.
+        Remembered with the step (HEATING_PROP). `resumed`: back to the heating
+        after Stop and Start or a restart, which says nothing new - and, once
+        it had asked for the water to be moved (ASKED_PROP), back to holding
+        it with no second question: the brewer's Next moves on."""
+        self.arrived = True  # the heating start has come: change_time changes the ready time only
+        self.heating = True
+        self.asked = bool(resumed and self.props.get(self.ASKED_PROP, False))
+        target = self._ready_temp()
+        if not self.props.get(self.HEATING_PROP, False):
+            self.props[self.HEATING_PROP] = True
+            await self._save()
+        reset = getattr(self, "reset_heat_watch", None)
+        if callable(reset):
+            reset()
+        if target is not None:
+            await self._heat(target)
+        if message and not resumed:
+            self.cbpi.notify(self.name, message, NotificationType.SUCCESS)
+        self._show_heating()
+        await self.push_update()
+
+    async def _save(self):
+        try:
+            await self.cbpi.step.save()
+        except Exception as exc:  # noqa: BLE001 - kept in memory either way
+            logger.warning("BrewStart: could not save the step - %s", exc)
+
+    def _show_heating(self):
+        """The status line, heating or holding. Never "Start ..." nor "heating
+        from": Brew Day reads a waiting step's heating start from those."""
+        values = dict(target=format_temp(self._ready_temp() or 0, self._unit()),
+                      ready=self._at(self.ready_at) if getattr(self, "ready_at", None) else "?")
+        if getattr(self, "asked", False):
+            self.summary = t("summary_water_ready", self.language, **values)
+        elif getattr(self, "late_said", False) and getattr(self, "ready_at", None):
+            self.summary = t("summary_heating_late", self.language, **values)
+        else:
+            self.summary = t("summary_heating", self.language, **values)
+
+    async def _heat_tick(self, now):
+        """One look while heating or holding: the stall watch, the question once
+        the water reads Ready_Temp, and a word if the ready time comes first."""
+        water = self._water_temp(self._kettle("Heat_Kettle"))
+        target = self._ready_temp()
+        if not self.asked and target is not None:
+            watch = getattr(self, "note_heat_progress", None)
+            if callable(watch) and water is not None:
+                watch(water, target)
+            if water is not None and self._reached(water, target):
+                await self._water_ready()
+                return
+            ready_at = getattr(self, "ready_at", None)
+            if not self.late_said and ready_at is not None and now >= ready_at:
+                self.late_said = True
+                unit = self._unit()
+                self.cbpi.notify(self.name, t("notify_water_late", self.language, ready=self._at(ready_at),
+                                              kettle=self._kettle_name(), target=format_temp(target, unit),
+                                              water="?" if water is None else format_temp(water, unit)),
+                                 NotificationType.WARNING)
+        self._show_heating()
+        await self.push_update()
+
+    def _reached(self, water, target):
+        reached = getattr(self, "target_reached", None)
+        if callable(reached):
+            return reached(water, target)
+        return water >= target
+
+    async def _water_ready(self):
+        """The water reads Ready_Temp: held there, and the brewer asked to move it."""
+        self.asked = True
+        if not self.props.get(self.ASKED_PROP, False):
+            self.props[self.ASKED_PROP] = True
+            await self._save()
+        self._show_heating()
+        await self.push_update()
+        self._ask()
+
+    def _ask(self):
+        """"Move the strike water to the Mash Tun, then press Next", with Next
+        Step, as the strike water step on the HLT asks it: kept on every page
+        until answered, and taken down when the step stops or ends. Its button is
+        the only thing that moves a Ready by BrewStart on, with the screens'
+        NEXT. The phone alert plugin sends a question with a button on."""
+        notify = self.cbpi.notify
+        try:
+            kept = {"keep": True} if "keep" in inspect.signature(notify).parameters else {}
+        except (TypeError, ValueError):
+            kept = {}
+        question = notify(
+            self.name,
+            t("notify_water_ready", self.language, to=self._next_kettle_name()),
+            NotificationType.INFO,
+            action=[NotificationAction(t("action_next_step", self.language), self.WaterMoved)],
+            **kept,
+        )
+        keep = getattr(getattr(self.cbpi, "step", None), "keep_step_prompt", None)
+        if question is not None and callable(keep):
+            try:
+                keep(self.id, self.QUESTION_KIND, question)
+            except Exception as exc:  # noqa: BLE001 - a question never stops the brew
+                logger.debug("BrewStart: could not keep the question - %s", exc)
+
+    async def change_target(self, temp):
+        """The strike water's new temperature while the step runs: USE and BACK TO
+        in CraftBeerPi's strike water helper, which takes a Ready by BrewStart
+        that heats its kettle itself as the strike water step.
+
+        Ready_Temp takes it. Waiting, the heating start is worked out again from
+        it within a minute, as from the water's temperature. Heating or holding,
+        Heat_Kettle's target moves at once, and a question already asked is taken
+        down from every page and asked again once the water reads the new
+        temperature - at once if it's already there: the HLT can't cool it.
+        True when a question was taken down, as MashInStep.change_target says.
+        """
+        temp = float(temp)
+        self.props["Ready_Temp"] = temp
+        if not getattr(self, "heating", False):
+            return False
+        await self._heat(temp)
+        reset = getattr(self, "reset_heat_watch", None)
+        if callable(reset):
+            reset()
+        asked = bool(getattr(self, "asked", False))
+        if asked:
+            self.forget_wait()
+        self._show_heating()
+        await self.push_update()
+        return asked
+
+    def forget_wait(self):
+        """Forget that the question was asked, and take it down from every page:
+        the water is to be heated to a new temperature first. For the strike
+        water helper, on a step stopped after it asked, too: Start then heats and
+        asks once the water reads the new temperature. True when it had asked."""
+        asked = bool(self.props.get(self.ASKED_PROP, False)) or bool(getattr(self, "asked", False))
+        self.asked = False
+        if self.ASKED_PROP in self.props:
+            self.props[self.ASKED_PROP] = False
+        withdraw = getattr(getattr(self.cbpi, "step", None), "withdraw_step_prompt", None)
+        if asked and callable(withdraw):
+            try:
+                withdraw(self.id, self.QUESTION_KIND)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("BrewStart: could not take the question down - %s", exc)
+        return asked
 
     async def on_props_saved(self):
         """Feedback as soon as the brewer saves the step, not at brew time.
@@ -508,7 +822,12 @@ class BrewStart(CBPiStep):
 
         Refused with nothing changed, the reason told to every screen as an info, for a time that has passed, a day
         or time that can't be read, a day the form doesn't offer, and a step whose time has come, that has finished,
-        or that waits for Next Step. Raises then, so POST /step2/action/{id} answers 400.
+        or that waits for Next Step. Raises ValueError with that reason then, so POST /step2/action/{id} answers 400
+        with it on a core that passes it on (4.7.7.post61 on).
+
+        Ready by heating its kettle itself (1.3.0.post1): once the heating has begun, a new time only changes the ready
+        time. The heating carries on, the water is still asked about once it reads Ready_Temp, and the word that the
+        water is late, the carry-on after a restart and the screens follow the new time.
         """
         self._read_props()
         language = self.language
@@ -524,17 +843,19 @@ class BrewStart(CBPiStep):
         if getattr(step, "status", None) == StepState.DONE:
             self._refuse_change(t("change_finished", language))
         waiting = self.running is True
-        if waiting and getattr(self, "arrived", False):
+        heating = waiting and bool(getattr(self, "heating", False))
+        if waiting and getattr(self, "arrived", False) and not heating:
             moment = getattr(self, "target_start", None) or getattr(self, "asked_for", None)
             self._refuse_change(t("change_arrived", language, start=self._at(moment) if moment else "?"))
-        if waiting and getattr(self, "target_start", None) is None:
-            self._refuse_change(t("change_waiting_next", language))
+        if waiting and getattr(self, "target_start", None) is None and not heating:
+            self._refuse_change(t("change_waiting_heat_now" if getattr(self, "waits_for_heat_now", False)
+                                  else "change_waiting_next", language))
         if Mode is not None and mode not in MODES:
             self._refuse_change(t("change_problem", language, error=t("err_unknown_mode", language, mode=mode)))
         now = brewing_now()
         try:
             requested = resolve_start(mode, start_time, start_date, now=now, language=language)
-            plan = self._plan(requested) if waiting and self.ready_by else None
+            plan = self._plan(requested) if waiting and self.ready_by and not heating else None
         except ValueError as exc:
             self._refuse_change(t("change_problem", language, error=exc))
         if requested <= now:
@@ -548,6 +869,9 @@ class BrewStart(CBPiStep):
             await self.cbpi.step.save()
             return
         was = self.asked_for
+        if heating:
+            await self._ready_time_changed(was, requested, self._settings_key(mode, start_time, start_date))
+            return
         self.plan = plan
         self.ready_at = requested if plan is not None else None
         self.target_start = plan.start if plan is not None else requested
@@ -566,6 +890,26 @@ class BrewStart(CBPiStep):
         self.cbpi.notify(self.name, t("notify_time_changed", language, was=self._at(was),
                                       message=self._scheduled_message()), NotificationType.INFO)
         self._show(remaining)
+        await self.push_update()
+
+    async def _ready_time_changed(self, was, requested, key):
+        """change_time once the heating has begun: only the ready time moves.
+        The heating carries on as it is; the word that the water is late comes
+        again if the new time passes first, and the carry-on after a restart is
+        counted from the new time."""
+        self.ready_at = requested
+        self.asked_for = requested
+        self.late_said = False
+        await self._keep(key, requested)
+        await self._allow_carrying_on()
+        logger.info("BrewStart: ready time changed to %s, was %s; heating carries on",
+                    self._at(requested), self._at(was) if was else "?")
+        self.cbpi.notify(self.name, t("notify_ready_time_changed", self.language,
+                                      was=self._at(was) if was else "?", ready=self._at(requested),
+                                      kettle=self._kettle_name(),
+                                      target=format_temp(self._ready_temp() or 0, self._unit())),
+                         NotificationType.INFO)
+        self._show_heating()
         await self.push_update()
 
     def _refuse_change(self, message):
@@ -738,6 +1082,10 @@ class BrewStart(CBPiStep):
 
     async def _tick(self, now=None, monotonic=None):
         """One look at the clock. True when the step should hand over."""
+        if getattr(self, "heating", False):
+            # Ready by heating its kettle itself: only Next moves it on.
+            await self._heat_tick(now or brewing_now())
+            return False
         if self.arrived:
             return self.auto_next
         if self.target_start is None:
@@ -754,7 +1102,8 @@ class BrewStart(CBPiStep):
                 await self._too_late(now)
                 return False
             await self._arrive(self._reached_message())
-            return self.auto_next
+            # Heating its kettle itself, it stays: only the brewer's Next moves it on.
+            return self.auto_next and not getattr(self, "heating", False)
         self._show(remaining)
         self._prewarn(remaining)
         await self.push_update()
@@ -782,9 +1131,10 @@ class BrewStart(CBPiStep):
             notify_before = 15
 
         self.ready_by = (self.props.get("Timing", None) or TIMING_START) == TIMING_READY
-        # Ready by always goes on by itself, whatever AutoNext an older form
-        # saved: waiting for a click at the heating start would leave the water
-        # cold by the time it was asked for.
+        # AutoNext is for Start at only, whatever an older form saved for Ready
+        # by. Ready by heats Heat_Kettle itself at the heating start and only the
+        # brewer's Next moves it on (_tick); before a MashInStep on that kettle it
+        # hands over then, as it always did, so that step heats the water.
         auto_next = self.ready_by or (self.props.get("AutoNext", None) or "Yes") == "Yes"
         return mode, start_time, start_date, max(0, notify_before), auto_next
 
@@ -837,7 +1187,12 @@ class BrewStart(CBPiStep):
         self.asked_for = None
         self._clock_seen = None
         self._planned_at = brewing_monotonic()
+        self.heating = False
+        self.asked = False
+        self.late_said = False
+        self.waits_for_heat_now = False
         mode, start_time, start_date, notify_before, self.auto_next = self._read_props()
+        self.kettle = self._kettle("Heat_Kettle") if self.ready_by else None
         self.notify_before_seconds = notify_before * 60
         now = brewing_now()
         key = self._settings_key(mode, start_time, start_date)
@@ -870,6 +1225,16 @@ class BrewStart(CBPiStep):
             # notification, with the way on.
             self._offer_next(t("error_prefix", self.language, error=exc),
                              NotificationType.ERROR)
+            return
+
+        if self.ready_by and self.props.get(self.HEATING_PROP, False):
+            # It had begun heating its kettle when it stopped, or the server did:
+            # back to the heating at once, and to the question once the water
+            # reads Ready_Temp. Never a second wait for the time.
+            self.asked_for = requested
+            await self._allow_carrying_on()
+            await self._start_heating(resumed=True)
+            logger.info("BrewStart: back to heating %s", self._kettle_name())
             return
 
         if not resumed:
@@ -906,11 +1271,31 @@ class BrewStart(CBPiStep):
 
     async def on_stop(self):
         self.summary = ""
+        if self._switches_heat_off():
+            await self._heat_off()
         await self.push_update()
+
+    def _switches_heat_off(self):
+        """On Next and on Stop, a Ready by that heats its kettle itself switches
+        that kettle's AUTO off, before the next step starts: two logics must
+        never drive one element, and the mash tun's PID_HERMS drives the HLT's.
+        Next does even when the step never heated it. Before a MashInStep on the
+        same kettle it is left on: that step goes on heating it."""
+        if not getattr(self, "ready_by", False):
+            return False
+        if getattr(self, "heating", False) or self.props.get(self.HEATING_PROP, False):
+            return True
+        return self.cancel_reason == StepResult.NEXT and not self._next_heats_this_kettle()
 
     async def reset(self):
         self.summary = ""
         self._forget()
+        for key in (self.HEATING_PROP, self.ASKED_PROP):
+            try:
+                if key in self.props:
+                    del self.props[key]
+            except Exception:  # noqa: BLE001
+                self.props[key] = False
 
     def _pause(self):
         """Real seconds until the next look at the clock.
