@@ -47,6 +47,24 @@ def configured_language(cbpi):
     return normalise_language(value)
 
 
+try:
+    from cbpi.api.timefmt import twelve_hour as _core_twelve_hour
+except ImportError:  # a core before CLOCK_FORMAT (4.7.7.post60): no setting, so 24-hour
+    _core_twelve_hour = None
+
+
+def configured_twelve_hour(cbpi):
+    """Whether CraftBeerPi's CLOCK_FORMAT shows times of day in 12-hour form
+    ("7:00 AM"). Missing, blank or anything but "12-hour" is 24-hour, as on a
+    core without the setting."""
+    if _core_twelve_hour is not None:
+        return _core_twelve_hour(cbpi)
+    try:
+        return cbpi.config.get("CLOCK_FORMAT", None) == "12-hour"
+    except Exception:  # noqa: BLE001 - a server without settings: 24-hour
+        return False
+
+
 # The browser's own date and time pickers, on a server that has them (this
 # fork from 4.7.7.post15); a text field with the format spelled out on one that
 # does not.
@@ -418,7 +436,9 @@ class BrewStart(CBPiStep):
     # ----------------------------------------------------------- messages
 
     def _at(self, moment):
-        return format_start(moment, self.language)
+        """A moment with its day, in BrewStart's language and CraftBeerPi's
+        clock format: "Sat Nov 21, 7:00 AM", or "Sat Nov 21, 07:00"."""
+        return format_start(moment, self.language, configured_twelve_hour(self.cbpi))
 
     def _unit(self):
         return self.get_config_value("TEMP_UNIT", "C")

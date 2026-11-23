@@ -128,6 +128,10 @@ Set everything up in the evening, start the brew, and the strike water is hot at
 
 The forms and messages are in one language, chosen in **Settings** under `BREWSTART_LANGUAGE`: English (the default) or Deutsch. Messages follow a change at once; the forms show it after a restart.
 
+### Times of day
+
+From 1.3.0.post2 BrewStart writes times of day as CraftBeerPi's `CLOCK_FORMAT` setting says (CraftBeerPi 4.7.7.post60 or later): 12-hour, `Sat Nov 21, 7:00 AM`, or 24-hour, `Sat Nov 21, 07:00`; in German `21.11.2026 7:00 AM` or `21.11.2026 07:00`. That's in its notifications, its status line and the reasons it gives. A change shows at once. The setting missing, blank or anything else is 24-hour, as on an older CraftBeerPi. The time you type stays `HH:MM`, 24-hour, and durations (`8h 56m 10s to go`, `about 27 min`) don't change.
+
 ## Step status as an actor (Mash / Boil / Whirlpool)
 
 CraftBeerPi 4 can only make things depend on **actors**, not on steps. These virtual actors are **ON** while the matching step is running:
@@ -174,6 +178,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.3.0.post2** – Times of day follow CraftBeerPi's `CLOCK_FORMAT` (4.7.7.post60): `Sat Nov 21, 7:00 AM` in 12-hour, `Sat Nov 21, 07:00` in 24-hour as before, and `21.11.2026 7:00 AM` in German - in the notifications, the status line and the reasons for a refused change. Missing or anything but `12-hour` is 24-hour. The status line keeps its shape, so Brew Day still reads a waiting BrewStart's heating start from it. Durations and the typed `HH:MM` don't change (see [Times of day](#times-of-day)).
 * **1.3.0.post1** – **Ready by heats the HLT itself.** Before, Ready by handed over to the next step by itself at the heating start, and only planned from Ready_Temp: before a MashIn on the mash tun, that started the mash tun's step - its pump on in an empty tun, heating to the mash-in temperature. Now, at the heating start, BrewStart sets Heat_Kettle's target to Ready_Temp and switches its AUTO on; once the water reads it, holds it and asks "Move the strike water to the Mash Tun, then press Next"; and moves on only on Next, switching Heat_Kettle's AUTO off before the next step starts (Stop switches it off too). It says when the water is late, warns when heating stalls, carries on heating or holding after a restart without asking twice, and a time already passed offers **Heat now** instead of Next Step. `change_target` and `forget_wait` let CraftBeerPi's strike water helper (4.7.7.post61) take it as the strike water step for USE and BACK TO. Once heating has begun, `change_time` moves only the ready time. Before a MashIn on Heat_Kettle (a recipe made for an older BrewStart) it hands over at the heating start as before. See [Heating, holding, and moving the strike water](#heating-holding-and-moving-the-strike-water-130post1).
 * **1.2.0.post10** – **Change time** (`change_time`), an action that takes a new day and time while the step waits, so the time can change the night before without stopping the brew. The step plans again, says the new start, and keeps it for a restart. A time that has passed, or a step whose time has come, is refused with the reason in an info notification (see [A new time while it waits](#a-new-time-while-it-waits)).
 * **1.2.0.post9** – A new step's form starts on **Ready by**, not Start at. A step saved with no Timing at all still runs as Start at, as it did before Timing existed.

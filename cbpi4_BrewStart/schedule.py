@@ -168,14 +168,27 @@ _EN_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
-def format_start(start: datetime, language: str = DEFAULT_LANGUAGE) -> str:
+def format_clock(moment: datetime, twelve_hour: bool = False) -> str:
+    """A time of day as CraftBeerPi's CLOCK_FORMAT shows it: "7:00 AM" and
+    "11:15 PM" - midnight "12:00 AM", noon "12:00 PM" - or "07:00" and "23:15".
+    "AM" and "PM" whatever the language, as CraftBeerPi writes them."""
+    if not twelve_hour:
+        return "{:%H:%M}".format(moment)
+    return "{}:{:02d} {}".format(moment.hour % 12 or 12, moment.minute,
+                                 "AM" if moment.hour < 12 else "PM")
+
+
+def format_start(start: datetime, language: str = DEFAULT_LANGUAGE,
+                 twelve_hour: bool = False) -> str:
     """A start time as the brewer reads it: "Fri Oct 30, 07:00" in English,
-    "30.10.2026 07:00" in German. The weekday is there so that a start a day
-    later than meant - Tomorrow chosen after midnight - stands out."""
+    "30.10.2026 07:00" in German - with `twelve_hour`, "Fri Oct 30, 7:00 AM"
+    and "30.10.2026 7:00 AM". The weekday is there so that a start a day later
+    than meant - Tomorrow chosen after midnight - stands out."""
+    clock = format_clock(start, twelve_hour)
     if normalise_language(language) == "de":
-        return start.strftime("%d.%m.%Y %H:%M")
-    return "{} {} {}, {:%H:%M}".format(
-        _EN_DAYS[start.weekday()], _EN_MONTHS[start.month - 1], start.day, start)
+        return "{} {}".format(start.strftime("%d.%m.%Y"), clock)
+    return "{} {} {}, {}".format(
+        _EN_DAYS[start.weekday()], _EN_MONTHS[start.month - 1], start.day, clock)
 
 
 # ---------------------------------------------------------------------------

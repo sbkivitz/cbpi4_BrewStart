@@ -153,6 +153,24 @@ def test_format_start_ignores_the_process_locale(monkeypatch):
     assert schedule.format_start(moment, "en") == "Sun Oct 11, 06:00"
 
 
+def test_twelve_hour_times_as_craftbeerpi_writes_them():
+    """CLOCK_FORMAT 12-hour (1.3.0.post2): no leading zero, midnight 12:00 AM,
+    noon 12:00 PM, AM and PM in both languages; 24-hour exactly as before."""
+    from cbpi4_BrewStart.schedule import format_clock
+
+    def at(hour, minute):
+        return datetime(2026, 11, 21, hour, minute)
+
+    assert [format_clock(at(h, m), True) for h, m in ((7, 0), (23, 15), (0, 0), (12, 0), (0, 5), (12, 59))] == \
+        ["7:00 AM", "11:15 PM", "12:00 AM", "12:00 PM", "12:05 AM", "12:59 PM"]
+    assert [format_clock(at(h, m)) for h, m in ((7, 0), (23, 15), (0, 0))] == ["07:00", "23:15", "00:00"]
+    assert format_start(at(7, 0), "en", True) == "Sat Nov 21, 7:00 AM"
+    assert format_start(at(23, 15), "en", True) == "Sat Nov 21, 11:15 PM"
+    assert format_start(at(7, 0), "de", True) == "21.11.2026 7:00 AM"
+    assert format_start(at(7, 0), "en", False) == "Sat Nov 21, 07:00"
+    assert format_start(at(7, 0), "de") == "21.11.2026 07:00"
+
+
 # ----------------------------------------------------------- negative controls
 #
 # schedule.py as released in 1.2.0.post3, so the tests above are known to
