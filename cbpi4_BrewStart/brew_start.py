@@ -715,10 +715,21 @@ class BrewStart(CBPiStep):
             except Exception as exc:  # noqa: BLE001
                 logger.debug("BrewStart: could not write %s to the disk - %s", series, exc)
 
+        self._spawn(later())
+
+    def _spawn(self, work):
+        """`work`, a coroutine, in a task of its own, held until it ends: the
+        event loop keeps only a weak reference to a task. Closed unrun when no
+        loop runs."""
         try:
-            asyncio.get_running_loop().create_task(later())
-        except RuntimeError:  # no loop running: left to the log's own batching
-            pass
+            task = asyncio.get_running_loop().create_task(work)
+        except RuntimeError:
+            work.close()
+            return None
+        chores = self.__dict__.setdefault("_chores", set())
+        chores.add(task)
+        task.add_done_callback(chores.discard)
+        return task
 
     def _record_heating(self):
         """What it planned, as the heating starts: the minutes for the heating,
@@ -1182,6 +1193,77 @@ class BrewStart(CBPiStep):
               countdown=format_countdown(remaining)),
             NotificationType.WARNING,
         )
+
+    def clock_moved(self, seconds):
+        """CraftBeerPi's clock has just jumped `seconds`, back to the computer's
+        time: a simulator's speed changed (CraftBeerPi.brewing_clock, core
+        4.7.7.post63; never on a rig). CraftBeerPi leaves a step with a
+        clock_moved of its own to it (StepController.replan_after_clock_reset),
+        and BrewStart goes on as after a restart:
+
+        - Ready by heating or holding its kettle carries on: the kettle's AUTO
+          and target stay, and a question asked stays up and is never asked
+          again. Its ready time is worked out again from its settings, as START
+          does - Today and Tomorrow from the clock as it now is - so it is late
+          if that has passed, and may carry on after a restart until two hours
+          after it;
+        - waiting, it plans again from its settings, as START does: stopped and
+          started again, quietly, as CraftBeerPi does a BrewStart without a
+          clock_moved of its own;
+        - not started, or stopped, it forgets the moment it planned, so START
+          plans afresh - one stopped while heating still goes back to the
+          heating. Done, or handing over, nothing.
+        """
+        moved = getattr(super(), "clock_moved", None)
+        if callable(moved):
+            moved(seconds)  # the stall watch's window
+        self._clock_seen = None  # a look before the plan is made again isn't a system clock changed
+        if self._status() == StepState.DONE or getattr(self, "_handover", None) is not None:
+            return
+        if not self.running:
+            self._forget()
+        elif getattr(self, "heating", False):
+            self._ready_time_again()
+        else:
+            self._spawn(self._plan_again())
+
+    def _status(self):
+        step = getattr(getattr(self.cbpi, "step", None), "find_by_id", lambda _id: None)(self.id)
+        return getattr(step, "status", None)
+
+    def _ready_time_again(self):
+        """Heating or holding as the clock was reset: the ready time from the
+        settings again, as START works it out. The heating carries on whatever
+        it is, as after change_time once heating has begun."""
+        mode, start_time, start_date, _, _ = self._read_props()
+        try:
+            requested = resolve_start(mode=mode, start_time=start_time, start_date=start_date,
+                                      now=brewing_now(), language=self.language)
+        except ValueError as exc:
+            logger.warning("BrewStart: the clock was reset; keeping the ready time - %s", exc)
+            return
+        if requested != getattr(self, "ready_at", None):
+            self.late_said = False  # late for the new time is said, once
+        self.ready_at = self.asked_for = requested
+        self.props[self.PLANNED_PROP] = "{}|{}".format(
+            self._settings_key(mode, start_time, start_date), requested.isoformat())
+        self._spawn(self._allow_carrying_on())
+        self._show_heating()
+        logger.info("BrewStart: the clock was reset; carries on heating %s, ready by %s",
+                    self._kettle_name(), self._at(requested))
+
+    async def _plan_again(self):
+        """Waiting as the clock was reset: stopped, the moment it planned
+        forgotten, and started again, so START's planning counts Today and
+        Tomorrow from the clock as it now is. The server isn't told it stopped
+        or started; the brewer is told the new plan, as START tells it."""
+        try:
+            await self.stop()
+            await self.reset()
+            await self.start()
+            logger.info("BrewStart: plans again from its settings, the clock having been reset")
+        except Exception as exc:  # noqa: BLE001 - the step goes on as it was
+            logger.warning("BrewStart: could not plan again after the clock was reset - %s", exc)
 
     def _show(self, remaining):
         if self.plan is not None:
