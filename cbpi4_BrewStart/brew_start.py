@@ -19,7 +19,8 @@ try:
                            campden_tablets, efficiency_fraction,
                            efficiency_setting, format_countdown, format_percent,
                            format_start, format_tablets, format_temp, litres,
-                           plan_ready_by, resolve_start, volume_label)
+                           plan_ready_by, resolve_start, vessel_j_k,
+                           volume_label)
     from .strings import DEFAULT_LANGUAGE, normalise_language, t
 except ImportError:
     from cbpi4_BrewStart.schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY,
@@ -29,7 +30,8 @@ except ImportError:
                                           format_countdown, format_percent,
                                           format_start, format_tablets,
                                           format_temp, litres, plan_ready_by,
-                                          resolve_start, volume_label)
+                                          resolve_start, vessel_j_k,
+                                          volume_label)
     from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, normalise_language, t
 
 logger = logging.getLogger(__name__)
@@ -760,6 +762,9 @@ class BrewStart(CBPiStep):
         self._record("brewstart.litres", None if water_l is None else round(water_l, 3))
         self._record("brewstart.watts", watts)
         self._record("brewstart.efficiency", round(efficiency_fraction(self._efficiency()), 4))
+        steel = self._steel_j_k(self._kettle("Heat_Kettle"))
+        if steel > 0:
+            self._record("brewstart.steel_j_k", round(steel, 1))
 
     def _show_heating(self):
         """The status line, heating or holding. Never "Start ..." nor "heating
@@ -1134,7 +1139,19 @@ class BrewStart(CBPiStep):
             volume_unit=self.props.get("Volume_Unit", None),
             efficiency=self._efficiency(),
             language=self.language,
+            steel_j_k=self._steel_j_k(heat),
         )
+
+    def _steel_j_k(self, kettle):
+        """J/K of Heat_Kettle's own metal, from what it weighs empty and what it's
+        made of on CraftBeerPi's Hardware page (4.7.7.post65): heated with the
+        water, so counted in the plan. 0.0 without them, or on an older
+        CraftBeerPi, and the plan is as it was."""
+        try:
+            return vessel_j_k(getattr(kettle, "empty_weight", None), getattr(kettle, "material", None),
+                              getattr(kettle, "specific_heat", None), self._unit())
+        except Exception:  # noqa: BLE001 - a figure that can't be read is none
+            return 0.0
 
     def _efficiency(self):
         """BREWSTART_EFFICIENCY as saved, None when blank: read for every plan,

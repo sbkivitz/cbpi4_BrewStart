@@ -217,6 +217,52 @@ ASSUMED_COLD_C = 2.0
 
 DEFAULT_MARGIN_MIN = 10.0
 
+#: cal/g C of what a kettle is made of, as CraftBeerPi's Hardware page offers it, and as BeerSmith's
+#: TUN_SPECIFIC_HEAT and CraftBeerPi's strike water model (cbpi.strike.vessels) take it.
+SPECIFIC_HEAT = {"stainless_steel": 0.12, "aluminium": 0.22}
+MATERIALS = ("stainless_steel", "aluminium", "other")
+#: Water's: more, for what a kettle is made of, is a figure mistyped.
+MAX_SPECIFIC_HEAT = 1.0
+CAL_G_C = 4186.8          # J/(kg K) in 1 cal/(g C)
+LB = 0.45359237           # kg in a pound
+
+
+def _usable(value):
+    """A figure to use: a number above 0, else None - blank, 0, negative, not a number."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value.strip().replace(",", ".")) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def vessel_j_k(empty_weight, material, specific_heat, temp_unit) -> float:
+    """J/K of a kettle's own metal, from its figures on CraftBeerPi's Hardware page (4.7.7.post65 or later): what it
+    weighs empty - lb on a Fahrenheit brewery, kg on a Celsius one - and what it's made of. Read as CraftBeerPi's
+    strike water model reads them: stainless steel 0.12 cal/g C, aluminium 0.22, other at its own specific heat, a
+    weight with no material taken as stainless steel. 0.0 when they give nothing: a weight blank, 0 or less or
+    unreadable; a material it doesn't know; other without a specific heat above 0 and no more than water's."""
+    weight = _usable(empty_weight)
+    if weight is None:
+        return 0.0
+    blank = material is None or (isinstance(material, str) and not material.strip())
+    name = None
+    if not blank:
+        word = "_".join(str(material).strip().lower().replace("-", " ").split()) if isinstance(material, str) else ""
+        name = word if word in MATERIALS else None
+        if name is None:
+            return 0.0
+    if name == "other":
+        heat = _usable(specific_heat)
+        if heat is None or heat > MAX_SPECIFIC_HEAT:
+            return 0.0
+    else:
+        heat = SPECIFIC_HEAT[name or "stainless_steel"]
+    kg = weight * LB if is_fahrenheit(temp_unit) else weight
+    return kg * heat * CAL_G_C
+
 
 def is_fahrenheit(temp_unit) -> bool:
     return str(temp_unit or "C").strip().upper().startswith("F")
@@ -248,12 +294,13 @@ def litres(volume, volume_unit, temp_unit, language: str = DEFAULT_LANGUAGE) -> 
 
 def heat_up_minutes(volume, volume_unit, start_temp, target_temp, temp_unit, watts,
                     efficiency=None,
-                    language: str = DEFAULT_LANGUAGE) -> float:
+                    language: str = DEFAULT_LANGUAGE, steel_j_k=0.0) -> float:
     """Minutes to heat `volume` of water from start_temp to target_temp.
 
     Temperatures are in temp_unit. Zero when the water is already there.
     efficiency is a fraction (0.9) or a percentage (90); blank is
-    HEAT_EFFICIENCY.
+    HEAT_EFFICIENCY. steel_j_k: J/K of the kettle's own metal, heated with
+    the water (vessel_j_k); 0 leaves it out.
     """
     water_l = litres(volume, volume_unit, temp_unit, language)
     power = _positive(watts, "err_ready_watts", language)
@@ -263,6 +310,8 @@ def heat_up_minutes(volume, volume_unit, start_temp, target_temp, temp_unit, wat
     if not rise_c > 0:
         return 0.0
     joules = water_l * WATER_KG_PER_L * WATER_J_PER_KG_K * rise_c
+    if steel_j_k and steel_j_k > 0:
+        joules += steel_j_k * rise_c
     return joules / (power * share) / 60.0
 
 
@@ -369,14 +418,15 @@ def format_tablets(tablets: float) -> str:
 def plan_ready_by(ready_at: datetime, target_temp, watts, temp_unit, volume,
                   water_temp, strike_volume=None, strike_temp=None,
                   volume_unit=None, margin=None, efficiency=None,
-                  language: str = DEFAULT_LANGUAGE) -> ReadyPlan:
+                  language: str = DEFAULT_LANGUAGE, steel_j_k=0.0) -> ReadyPlan:
     """Plan the heating start for water that must be at target_temp by ready_at.
 
     volume is the water in the kettle with the element, water_temp its
     current reading. strike_volume is strike water heated alongside it, as on
     a HERMS whose mash tun is circulated through the coil, strike_temp its own
     reading; blank or 0 when there is none. A reading of None - nothing
-    usable - is planned as ASSUMED_COLD_C, and the plan says so.
+    usable - is planned as ASSUMED_COLD_C, and the plan says so. steel_j_k:
+    J/K of the kettle's own metal, heated with its water (vessel_j_k).
     """
     try:
         target = float(target_temp)
@@ -389,7 +439,7 @@ def plan_ready_by(ready_at: datetime, target_temp, watts, temp_unit, volume,
     assumed = water_temp is None
     water = cold if assumed else float(water_temp)
     heat = heat_up_minutes(volume, volume_unit, water, target, temp_unit, watts,
-                           efficiency=efficiency, language=language)
+                           efficiency=efficiency, language=language, steel_j_k=steel_j_k)
 
     strike = 0.0
     if volume_given(strike_volume):
