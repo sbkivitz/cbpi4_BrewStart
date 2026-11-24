@@ -68,6 +68,25 @@ POST /step2/action/<step id>
 
 A page can tell a BrewStart that has this action from an older one by the step types CraftBeerPi sends (`GET /step2/` and `/system/`): BrewStart's `actions` include one whose `method` is `change_time`.
 
+### Any setting, whenever it hasn't finished
+
+From 1.3.0.post6. **Change settings** (`change_settings`) takes any of BrewStart's settings by their names - `Timing`, `Mode`, `StartDate`, `StartTime`, `Heat_Kettle`, `Ready_Temp`, `Volume`, `Volume_Unit`, `Grain_Temp`, `Heater_Watts`, `Campden_Reminder`, `NotifyBefore`, `AutoNext` - before the brew starts, while the step waits for its time, while it heats or holds the water, and while it is stopped. It is how Brew Day's BrewStart box and the Brew Steps page change it once it has begun:
+
+```
+POST /step2/action/<step id>
+{"action": "change_settings", "parameter": {"Volume": 18.5, "Ready_Temp": 165}}
+```
+
+* A setting left out stays as it is, and one sent as it is saved is no change, so a whole form may be sent. Blank (`""` or `null`) clears a setting, read as the form reads a blank: Timing Start at, Day Today, the grain from the boil kettle's probe, a heads-up of 15 minutes.
+* Waiting, it plans again at once, as `change_time` does: the moment it planned stands unless the day or the time changed, which count from the change. More water, a hotter target, a smaller element or another vessel moves the heating start; too little time left starts the heating now.
+* Heating or holding, a new temperature moves the vessel's target at once; another vessel moves the heating - the old vessel's AUTO off first, then the new one's target and AUTO on; holding, either takes the question down and asks again once the water is there. A new time only moves the ready time. The water, its unit and the element change the estimate the notification gives. **Start at** stops BrewStart's heating - the vessel's AUTO off - and it waits for its time as a Start at, or for **Next Step** once that has passed.
+* The water is never less than the recipe's strike water, where the recipe gives it: the HLT holds the strike water too. CraftBeerPi's strike water box keeps the same minimum, and looks at BrewStart's settings again the moment they change.
+* Not started, or stopped (STOP): the settings are saved, and START plans from them. Nothing runs or heats while it is stopped; one stopped while heating goes back to heating at START, on the new vessel at the new temperature.
+* It always changes the step itself, in place, and never builds a new one: STOP always reaches the step that runs, and what the run has done - the moment it planned, the heating, the question asked - stays as it was.
+* Refused, with nothing changed, the reason in words that say what to do instead, in an info notification and the call's 400 (`{"error": "action refused", "detail": ...}`): a setting it hasn't got, a choice it doesn't offer, a number that isn't one, water at or above boiling, a vessel that isn't there, Ready by without what it needs, a time that can't be read or has passed, a new time once a Start at's time has come, a vessel whose AUTO won't go on (the old one heats on), and a step that has finished.
+
+`change_time` stays for older pages.
+
 ### After a power cut
 
 The brew carries on by itself (from 1.2.0.post5, with this fork's CraftBeerPi 4.7.7.post21 or later). If the server stops while the step waits, while it heats or holds the water (1.3.0.post1), or while the step it handed over to is heating, that step picks up again when the server is back - with nobody pressing anything, and a notification saying so:
@@ -207,6 +226,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.3.0.post6** – **Change settings** (`change_settings`): any of BrewStart's settings, also while it waits for its time, heats or holds the water, so Brew Day and the Brew Steps page offer them all until it has finished. Waiting, it plans again at once; heating, a new temperature moves the target, another vessel moves the heating, and Start at stops it. The water is never less than the recipe's strike water; CraftBeerPi's strike water box hears of every change at once. Refusals say what to do instead, in English and German (see [Any setting, whenever it hasn't finished](#any-setting-whenever-it-hasnt-finished)).
 * **1.3.0.post5** – The heating plan counts Heat_Kettle's own metal from its figures on CraftBeerPi's Hardware page (4.7.7.post65 or later): its empty weight at the specific heat of what it's made of, as CraftBeerPi's strike water model reads them. Without a usable figure the plan is exactly as before. When it counted the metal, the record has `brewstart.steel_j_k` too.
 * **1.3.0.post4** – A simulator's change of speed leaves the heating alone. CraftBeerPi 4.7.7.post63 sets its clock back to the computer's time whenever `SIM_TIME_SCALE` changes, and stopped, reset and started again every BrewStart, so each planned again from its settings. That took a Ready by heating or holding the HLT for one waiting for its time: Stop switched the HLT's AUTO off, reset forgot it was heating and had asked, and the water was left to cool until a second heating start, with the question asked a second time. BrewStart now handles the reset itself (`clock_moved`): heating or holding, it carries on, with its ready time worked out again from its settings; waiting, it plans again as before (see [Ready by](#ready-by--hot-water-at-a-set-time)).
 * **1.3.0.post3** – For CraftBeerPi's Figures page. A new setting, `BREWSTART_EFFICIENCY`, in %: blank is the built-in 90 %, and USE on Figures sets it from past brews. A Ready by plans with it, a waiting one within a minute of a change, and says "at 85 % from past brews" when it's filled in. A Ready by records what it planned as the heating starts (`brewstart.planned_min`, `.ready_by`, `.litres`, `.watts`, `.efficiency`) and the reading the first time the water reads Ready_Temp (`brewstart.ready`), in CraftBeerPi's logs. See [Efficiency from past brews](#efficiency-from-past-brews) and [What BrewStart records for Figures](#what-brewstart-records-for-figures).

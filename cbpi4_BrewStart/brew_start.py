@@ -15,23 +15,23 @@ except ImportError:  # upstream CraftBeerPi: the wall clock is the only clock
     brewing_clock = None
 
 try:
-    from .schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY, MODES,
+    from .schedule import (L_PER_GAL, LEGACY_DATE, MODE_DATE, MODE_TODAY, MODES,
                            campden_tablets, efficiency_fraction,
                            efficiency_setting, format_countdown, format_percent,
-                           format_start, format_tablets, format_temp, litres,
-                           plan_ready_by, resolve_start, vessel_j_k,
-                           volume_label)
+                           format_start, format_tablets, format_temp,
+                           is_fahrenheit, litres, plan_ready_by, resolve_start,
+                           vessel_j_k, volume_label)
     from .strings import DEFAULT_LANGUAGE, normalise_language, t
 except ImportError:
-    from cbpi4_BrewStart.schedule import (LEGACY_DATE, MODE_DATE, MODE_TODAY,
-                                          MODES, campden_tablets,
+    from cbpi4_BrewStart.schedule import (L_PER_GAL, LEGACY_DATE, MODE_DATE,
+                                          MODE_TODAY, MODES, campden_tablets,
                                           efficiency_fraction,
                                           efficiency_setting,
                                           format_countdown, format_percent,
                                           format_start, format_tablets,
-                                          format_temp, litres, plan_ready_by,
-                                          resolve_start, vessel_j_k,
-                                          volume_label)
+                                          format_temp, is_fahrenheit, litres,
+                                          plan_ready_by, resolve_start,
+                                          vessel_j_k, volume_label)
     from cbpi4_BrewStart.strings import DEFAULT_LANGUAGE, normalise_language, t
 
 logger = logging.getLogger(__name__)
@@ -190,6 +190,44 @@ def change_time_parameters(language=DEFAULT_LANGUAGE):
         _field(TimeProperty(label="StartTime", configurable=True, description=t("prop_start_time", language)),
                t("name_start_time", language)),
     ]
+
+
+#: What the action change_settings takes: every setting of the step's form, by its saved name.
+SETTINGS = ("Timing", "Mode", "StartDate", "StartTime", "Heat_Kettle", "Ready_Temp", "Volume", "Volume_Unit",
+            "Grain_Temp", "Heater_Watts", "Campden_Reminder", "NotifyBefore", "AutoNext")
+#: The settings that say when: a change to one is worked out from the moment it is made, as change_time does.
+WHEN_SETTINGS = ("Mode", "StartDate", "StartTime")
+#: The settings with choices, and the choices.
+SETTING_CHOICES = {"Timing": (TIMING_START, TIMING_READY), "Mode": MODES, "Volume_Unit": ("gal", "L"),
+                   "Campden_Reminder": ("No", "Yes"), "AutoNext": ("Yes", "No")}
+#: What a blank choice is read as (_read_props, campden_dose): Volume_Unit's depends on TEMP_UNIT.
+BLANK_AS = {"Timing": TIMING_START, "Mode": MODE_TODAY, "Campden_Reminder": "No", "AutoNext": "Yes"}
+SETTING_NUMBERS = ("Ready_Temp", "Volume", "Grain_Temp", "Heater_Watts", "NotifyBefore")
+#: The form's name of each setting (strings.py name_*), for the words of a refusal.
+SETTING_NAMES = {"Timing": "timing", "Mode": "mode", "StartDate": "start_date", "StartTime": "start_time",
+                 "Heat_Kettle": "heat_kettle", "Ready_Temp": "ready_temp", "Volume": "volume",
+                 "Volume_Unit": "volume_unit", "Grain_Temp": "grain_temp", "Heater_Watts": "heater_watts",
+                 "Campden_Reminder": "campden", "NotifyBefore": "notify_before", "AutoNext": "auto_next"}
+#: Where water boils, in °F and °C: a Ready_Temp there or above is never reached, and the element would run on.
+BOILING = {"F": 212.0, "C": 100.0}
+
+
+def change_settings_parameters(language=DEFAULT_LANGUAGE, temp_unit="C"):
+    """What the action change_settings takes: the step form's settings, named, described and shown as the form
+    shows them, but with no defaults - a setting not sent stays as it is, so no default may stand in for one."""
+    params = step_properties(language, temp_unit)
+    for prop in params:
+        if hasattr(prop, "default_value"):
+            prop.default_value = None
+    return params
+
+
+class _Refusal(Exception):
+    """change_settings refused: the brewer's words, complete."""
+
+    def __init__(self, words):
+        super().__init__(words)
+        self.words = words
 
 
 def _simulation_clock():
@@ -619,9 +657,10 @@ class BrewStart(CBPiStep):
             kettle = None
         return getattr(kettle, "name", None) or t("default_mash_tun", self.language)
 
-    async def _heat(self, target):
+    async def _heat(self, target, tell=True):
         """Heat_Kettle's target to `target`, and its AUTO on if it isn't: its
-        logic heats the water there and holds it. False when it can't."""
+        logic heats the water there and holds it. False when it can't, said to
+        every screen unless `tell` is False (change_settings says it its own way)."""
         kettle = self._kettle("Heat_Kettle")
         if kettle is None:
             return False
@@ -635,15 +674,19 @@ class BrewStart(CBPiStep):
             logger.warning("BrewStart: could not heat %s - %s", getattr(kettle, "name", "?"), exc)
         instance = getattr(self._kettle("Heat_Kettle"), "instance", None)
         if instance is None or not getattr(instance, "state", False):
-            self.cbpi.notify(self.name, t("notify_cannot_heat", self.language, kettle=kettle.name),
-                             NotificationType.ERROR)
+            if tell:
+                self.cbpi.notify(self.name, t("notify_cannot_heat", self.language, kettle=kettle.name),
+                                 NotificationType.ERROR)
             return False
         return True
 
     async def _heat_off(self):
         """Heat_Kettle's AUTO off, so the next step's logic is the only one
         driving its element: on the rig the mash tun's PID_HERMS drives the HLT's."""
-        kettle = self._kettle("Heat_Kettle")
+        await self._kettle_off(self._kettle("Heat_Kettle"))
+
+    async def _kettle_off(self, kettle):
+        """`kettle`'s AUTO off, if it is on."""
         instance = getattr(kettle, "instance", None) if kettle is not None else None
         if instance is None or not getattr(instance, "state", False):
             return
@@ -903,6 +946,10 @@ class BrewStart(CBPiStep):
         problem = self._settings_problem(brewing_now())
         if problem:
             self.cbpi.notify(self.name, problem, NotificationType.WARNING)
+        self._say_campden()
+
+    def _say_campden(self):
+        """The Campden dose for all the water, when the reminder is on; or that the volume is blank."""
         if (self.props.get("Campden_Reminder", None) or "No") != "Yes":
             return
         language = self.language
@@ -1048,6 +1095,442 @@ class BrewStart(CBPiStep):
         self.cbpi.notify(self.name, message, NotificationType.INFO)
         raise ValueError(message)
 
+    # ----------------------------------------------------------- change_settings
+
+    @action("Change settings", change_settings_parameters())
+    async def change_settings(self, **settings):
+        """Any of the step's settings, also while it waits for its time, heats or holds the water
+        (POST /step2/action/{id}, action change_settings). CraftBeerPi refuses a running step's settings
+        (PUT /step2/{id} answers 409), and Brew Day's BrewStart box and the Brew Steps page offer every setting
+        until BrewStart has finished.
+
+        `settings`: any of SETTINGS, by its saved name. One not sent stays as it is, and one sent as it is saved is no
+        change, so a whole form may be sent. Blank ("" or None) clears it, read as the form reads a blank. All or
+        nothing: a refusal changes nothing, is told to every screen as an info in words that say what to do instead,
+        and is raised as ValueError, so POST /step2/action/{id} answers 400 with those words.
+
+        - Not started, or stopped: saved, and acted on as a saved form is (on_props_saved); START plans from them.
+        - Waiting for its time: planned again as change_time plans (_replan_waiting).
+        - Waiting for Next Step or Heat now: a new Timing, day or time plans again, as waiting; anything else is
+          saved, and it waits on.
+        - Start at, its time come: when it starts can't change; anything else is saved.
+        - Heating or holding: _change_while_heating.
+
+        Volume is never less than the recipe's strike water, the minimum CraftBeerPi's strike water box keeps
+        (_check_water). The strike water helper is told of a change at once (_tell_strike).
+
+        Always this step's own settings, changed in place, saved as the step's own saves are: never a new step built
+        and swapped in, which would leave this one running out of Stop's reach, its kettle heating, or lose what the
+        run has done. What a change does goes by the step's state - running or not - never by what this instance
+        remembers of an earlier run, so nothing a reset cleared comes back.
+        """
+        self._read_props()
+        language = self.language
+        if self._status() == StepState.DONE:
+            self._refuse_settings(t("settings_finished", language))
+        new = {}
+        for name, value in settings.items():
+            if name not in SETTINGS:
+                self._refuse_settings(t("settings_unknown", language, name=name))
+            if self._setting_same(name, value):
+                continue  # as saved, an older form's choice included: no change, and nothing to check
+            try:
+                value = self._setting_value(name, value)
+            except _Refusal as refusal:
+                self._refuse_settings(refusal.words)
+            if not self._setting_same(name, value):
+                new[name] = value
+        if not new:
+            return
+        before = {name: (name in self.props, self.props[name] if name in self.props else None) for name in SETTINGS}
+        for name, value in new.items():
+            self.props[name] = value
+        self._read_props()
+        try:
+            await self._apply_settings(new, before)
+        except _Refusal as refusal:
+            self._restore_settings(before)
+            self._read_props()
+            self._refuse_settings(refusal.words)
+        logger.info("BrewStart: settings changed - %s", ", ".join(sorted(new)))
+        self._tell_strike()
+
+    def _refuse_settings(self, message):
+        """change_settings refused: every screen is told why, quietly, and the action endpoint answers 400."""
+        logger.info("BrewStart: settings not changed - %s", message)
+        self.cbpi.notify(self.name, message, NotificationType.INFO)
+        raise ValueError(message) from None
+
+    def _restore_settings(self, before):
+        for name, (present, value) in before.items():
+            if present:
+                self.props[name] = value
+            elif name in self.props:
+                del self.props[name]
+
+    def _setting_value(self, name, value):
+        """`value` for setting `name` as it is saved: "" for blank, a number for a number, the text otherwise.
+        Raises _Refusal for a value the setting can't take."""
+        language = self.language
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return ""
+        setting = t("name_" + SETTING_NAMES[name], language)
+        if name in SETTING_CHOICES:
+            text = str(value).strip()
+            if text not in SETTING_CHOICES[name]:
+                raise _Refusal(t("settings_choice", language, setting=setting, value=text,
+                                 choices=self._either(SETTING_CHOICES[name])))
+            return text
+        if name in SETTING_NUMBERS:
+            try:
+                if isinstance(value, bool):
+                    raise ValueError(value)
+                number = float(value)
+                if not math.isfinite(number):
+                    raise ValueError(value)
+            except (TypeError, ValueError):
+                raise _Refusal(t("settings_number", language, setting=setting, value=value)) from None
+            if name in ("Volume", "Heater_Watts") and number <= 0:
+                raise _Refusal(t("settings_positive", language, setting=setting))
+            if name == "NotifyBefore" and number < 0:
+                raise _Refusal(t("settings_not_negative", language, setting=setting))
+            if name == "Ready_Temp":
+                unit = "F" if is_fahrenheit(self._unit()) else "C"
+                if number >= BOILING[unit]:
+                    raise _Refusal(t("settings_boiling", language, boil=format_temp(BOILING[unit], unit),
+                                     temp=format_temp(number, unit)))
+            return number
+        text = str(value).strip()
+        if name == "Heat_Kettle" and self._kettle_by_id(text) is None:
+            raise _Refusal(t("settings_no_kettle", language, value=text))
+        return text
+
+    def _either(self, choices):
+        """"Today, Tomorrow or Date"."""
+        choices = [str(c) for c in choices]
+        if len(choices) < 2:
+            return "".join(choices)
+        return ", ".join(choices[:-1]) + t("settings_or", self.language) + choices[-1]
+
+    def _setting_same(self, name, value):
+        """Whether `value` for setting `name` is what is saved, both read as the step reads them."""
+        saved = self.props[name] if name in self.props else None
+        return self._setting_read(name, saved) == self._setting_read(name, value)
+
+    def _setting_read(self, name, value):
+        blank = value is None or (isinstance(value, str) and not value.strip())
+        if name in SETTING_NUMBERS:
+            if blank:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return str(value).strip()
+        text = "" if blank else str(value).strip()
+        if not text and name in BLANK_AS:
+            return BLANK_AS[name]
+        if not text and name == "Volume_Unit":
+            return "gal" if is_fahrenheit(self._unit()) else "L"
+        return text
+
+    def _volume_unit(self):
+        """"gal" or "L": Volume_Unit, a blank one following TEMP_UNIT, as litres() and the strike water box read it."""
+        given = str(self.props.get("Volume_Unit", None) or "").strip().lower()
+        if given.startswith("gal"):
+            return "gal"
+        if given in ("l", "liter", "litre", "liters", "litres"):
+            return "L"
+        return "gal" if is_fahrenheit(self._unit()) else "L"
+
+    def _strike_water(self, unit):
+        """The recipe's strike water in `unit` ("gal" or "L"), rounded as CraftBeerPi's strike water box rounds it,
+        or None when the recipe doesn't give it: its import keeps it in the brew steps' basic data
+        (mash_numbers.infuse_l)."""
+        basic = getattr(getattr(self.cbpi, "step", None), "basic_data", None)
+        numbers = basic.get("mash_numbers") if isinstance(basic, dict) else None
+        try:
+            infuse_l = float(numbers.get("infuse_l"))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not math.isfinite(infuse_l) or infuse_l <= 0:
+            return None
+        return round(infuse_l / L_PER_GAL if unit == "gal" else infuse_l, 2)
+
+    def _check_water(self, new):
+        """Volume, or a new Volume_Unit, never under the recipe's strike water: the HLT holds the strike water too.
+        The strike water box's own minimum and words (POST /step2/strike/water's too_little). Raises _Refusal."""
+        if "Volume" not in new and "Volume_Unit" not in new:
+            return
+        try:
+            volume = float(self.props.get("Volume", None))
+        except (TypeError, ValueError):
+            return
+        unit = self._volume_unit()
+        least = self._strike_water(unit)
+        if least is not None and volume < least - 1e-9:
+            raise _Refusal(t("settings_too_little", self.language, min="{:.2f}".format(least), unit=unit))
+
+    def _settings_requested(self, now):
+        """The moment the settings ask for, worked out from `now` as START works it out. Raises _Refusal for one that
+        can't be read, or has passed."""
+        mode, start_time, start_date, _, _ = self._read_props()
+        try:
+            requested = resolve_start(mode, start_time, start_date, now=now, language=self.language)
+        except ValueError as exc:
+            raise _Refusal(t("settings_problem", self.language, error=exc)) from None
+        if requested <= now:
+            self._refuse_passed(requested, mode)
+        return requested
+
+    def _refuse_passed(self, requested, mode):
+        key = "settings_passed_today" if mode == MODE_TODAY else "settings_passed"
+        raise _Refusal(t(key, self.language, start=self._at(requested) if requested else "?"))
+
+    async def _apply_settings(self, new, before):
+        """change_settings with `new` already in the step's settings: checked, then acted on. Raises _Refusal before
+        anything outside the settings has changed - or, for a vessel that won't take the heating, with the heating
+        put back - and change_settings puts the settings back."""
+        when = any(name in new for name in WHEN_SETTINGS)
+        self._check_water(new)
+        now = brewing_now()
+        if self.running is not True:
+            if when:
+                self._settings_requested(now)
+            await self._settings_saved(new)
+            return
+        if getattr(self, "heating", False):
+            await self._change_while_heating(new, before, when, now)
+            return
+        if getattr(self, "arrived", False):
+            if when or "Timing" in new or "AutoNext" in new:
+                moment = getattr(self, "target_start", None) or getattr(self, "asked_for", None)
+                raise _Refusal(t("settings_arrived", self.language, start=self._at(moment) if moment else "?"))
+            await self._settings_kept(new)
+            return
+        if getattr(self, "target_start", None) is None and not (when or "Timing" in new):
+            # Waiting for Next Step or Heat now: only a new time plans again.
+            await self._settings_kept(new)
+            return
+        await self._replan_waiting(new, when, now)
+
+    async def _settings_saved(self, new):
+        """Not started, or stopped: saved for START, and acted on as a saved form is. Stopped after it had begun
+        heating, START goes back to the heating, on Heat_Kettle at Ready_Temp: a question already asked is taken down
+        for a new vessel or temperature, and Start at forgets the heating."""
+        if not self.ready_by:
+            self.forget_wait()
+            self._forget_heating()
+        elif "Heat_Kettle" in new or "Ready_Temp" in new:
+            self.forget_wait()
+        await self._save()
+        await self.on_props_saved()
+
+    def _forget_heating(self):
+        for key in (self.HEATING_PROP, self.ASKED_PROP):
+            if key in self.props:
+                del self.props[key]
+
+    async def _settings_kept(self, new):
+        """Running, with no new time to plan for: saved, and said."""
+        _, _, _, notify_before, self.auto_next = self._read_props()
+        self.notify_before_seconds = notify_before * 60
+        self.kettle = self._kettle("Heat_Kettle") if self.ready_by else None
+        await self._save()
+        self.cbpi.notify(self.name, t("settings_changed", self.language), NotificationType.INFO)
+        self._tell_campden(new)
+        await self.push_update()
+
+    async def _replan_waiting(self, new, when, now):
+        """Waiting for its time - or for Next Step or Heat now, with a new Timing, day or time: planned again as
+        change_time plans, from the water as it reads now. The moment already planned stands unless the day or the
+        time changed, which count from now - or there was none. Kept for a restart, and the server may carry it on
+        until two hours after it. Too little time left for the heating starts it now, as START does."""
+        mode, start_time, start_date, notify_before, auto_next = self._read_props()
+        was = getattr(self, "asked_for", None)
+        if when or was is None:
+            requested = self._settings_requested(now)
+        else:
+            requested = was
+            if requested <= now:
+                self._refuse_passed(requested, mode)
+        try:
+            plan = self._plan(requested) if self.ready_by else None
+        except ValueError as exc:
+            raise _Refusal(t("settings_problem", self.language, error=exc)) from None
+
+        self.plan = plan
+        self.ready_at = requested if plan is not None else None
+        self.target_start = plan.start if plan is not None else requested
+        self.asked_for = requested
+        self.auto_next = auto_next
+        self.notify_before_seconds = notify_before * 60
+        self.kettle = self._kettle("Heat_Kettle") if self.ready_by else None
+        self.pre_notified = False
+        self.waits_for_heat_now = False
+        self.late_said = False
+        self._planned_at = brewing_monotonic()
+        key = self._settings_key(mode, start_time, start_date)
+        await self._keep(key, requested)
+        await self._allow_carrying_on()
+        remaining = self.wall_clock_remaining(now)
+        if remaining <= 0:
+            await self._arrive(self._due_message(now))
+            self._tell_campden(new)
+            return
+        if was is not None and requested != was:
+            words = t("notify_time_changed", self.language, was=self._at(was), message=self._scheduled_message())
+        else:
+            words = t("settings_changed", self.language) + " " + self._scheduled_message()
+        self.cbpi.notify(self.name, words, NotificationType.INFO)
+        self._tell_campden(new)
+        self._show(remaining)
+        await self.push_update()
+
+    async def _change_while_heating(self, new, before, when, now):
+        """Ready by heating or holding Heat_Kettle:
+
+        - Timing to Start at stops BrewStart's heating (_stop_heating).
+        - Heat_Kettle moves the heating: the old vessel's AUTO off first, so two elements are never on at once, then
+          the new vessel's target Ready_Temp and AUTO on. A vessel whose AUTO won't go on is refused, and the old one
+          heats again as it did.
+        - Ready_Temp moves the vessel's target now, as change_target does.
+        - A vessel moved, or a new temperature, takes a question already asked down: it is asked again once the
+          water reads Ready_Temp, at once if it already does.
+        - A new day or time moves only the ready time, as change_time does once heating has begun.
+        - The water, its unit, the element's watts and the grain change the estimate the notice gives.
+        """
+        language = self.language
+        present, old_id = before["Heat_Kettle"]
+        old_kettle = self._kettle_by_id(old_id if present else None)
+        if not self.ready_by:
+            await self._stop_heating(new, when, now, old_kettle)
+            return
+        was = getattr(self, "asked_for", None)
+        requested = self._settings_requested(now) if when else getattr(self, "ready_at", None)
+        try:
+            plan = self._plan(requested or now)
+        except ValueError as exc:
+            raise _Refusal(t("settings_problem", language, error=exc)) from None
+
+        moved = "Heat_Kettle" in new
+        if moved and not await self._move_heating(old_kettle, before):
+            raise _Refusal(t("settings_cannot_move", language, new=self._kettle_name(),
+                             old=getattr(old_kettle, "name", None) or "?"))
+        if not moved and "Ready_Temp" in new:
+            await self._heat(self._ready_temp())
+        if moved or "Ready_Temp" in new:
+            reset = getattr(self, "reset_heat_watch", None)
+            if callable(reset):
+                reset()
+            if getattr(self, "asked", False):
+                self.forget_wait()
+        if when:
+            mode, start_time, start_date, _, _ = self._read_props()
+            self.asked_for = self.ready_at = requested
+            self.late_said = False
+            key = self._settings_key(mode, start_time, start_date)
+            await self._keep(key, requested)
+            await self._allow_carrying_on()
+        else:
+            await self._save()
+
+        unit = self._unit()
+        values = dict(ready=self._at(self.ready_at) if getattr(self, "ready_at", None) else "?",
+                      kettle=self._kettle_name(), target=format_temp(self._ready_temp() or 0, unit))
+        if set(new) <= set(WHEN_SETTINGS):
+            words = t("notify_ready_time_changed", language, was=self._at(was) if was else "?", **values)
+        else:
+            first = (t("notify_time_was", language, was=self._at(was) if was else "?")
+                     if when and requested != was else t("settings_changed", language))
+            if moved:
+                body = t("notify_heating_moved", language, old=getattr(old_kettle, "name", None) or "?",
+                         new=values["kettle"], target=values["target"], ready=values["ready"])
+            elif getattr(self, "asked", False) or plan.heat_minutes < 0.5:
+                body = t("notify_holding", language, kettle=values["kettle"], target=values["target"])
+            else:
+                body = t("notify_heating_estimate", language, water=format_temp(plan.water_temp, unit),
+                         heat=round(plan.heat_minutes), efficiency=self._efficiency_said(), **values)
+            words = first + " " + body
+        self.cbpi.notify(self.name, words, NotificationType.INFO)
+        self._tell_campden(new)
+        self._show_heating()
+        await self.push_update()
+
+    async def _move_heating(self, old, before):
+        """The heating from `old` to Heat_Kettle: old's AUTO off first, then Heat_Kettle's target Ready_Temp and its
+        AUTO on. False when Heat_Kettle's AUTO won't go on: it is switched off again, and `old` heats again at the
+        temperature it had."""
+        await self._kettle_off(old)
+        if await self._heat(self._ready_temp(), tell=False):
+            return True
+        await self._kettle_off(self._kettle("Heat_Kettle"))
+        if old is not None:
+            try:
+                present, temp = before["Ready_Temp"]
+                if present and temp not in (None, ""):
+                    await self.cbpi.kettle.set_target_temp(old.id, float(temp))
+                await self.cbpi.kettle.start(old.id)
+            except Exception as exc:  # noqa: BLE001 - said in the refusal; the brewer checks it
+                logger.warning("BrewStart: could not heat %s again - %s", getattr(old, "name", "?"), exc)
+            self.kettle = old
+        return False
+
+    async def _stop_heating(self, new, when, now, kettle):
+        """Ready by to Start at while heating or holding: BrewStart's heating stops - the vessel's AUTO off, a
+        question asked taken down, its heating forgotten - and it is a Start at for its time: it waits for it, or,
+        once that has passed, for Next Step, never moving on by itself. Stopping is always allowed: only a new day or
+        time that can't be read, or has passed, is refused."""
+        mode, start_time, start_date, notify_before, auto_next = self._read_props()
+        requested = self._settings_requested(now) if when else getattr(self, "asked_for", None)
+
+        await self._kettle_off(kettle)
+        self.forget_wait()
+        self._forget_heating()
+        self.heating = self.asked = self.arrived = False
+        self.late_said = self.waits_for_heat_now = self.pre_notified = False
+        self.plan = self.ready_at = self.kettle = None
+        self.auto_next = auto_next
+        self.notify_before_seconds = notify_before * 60
+        self.asked_for = requested
+        self._planned_at = brewing_monotonic()
+        self._clock_seen = None
+        name = getattr(kettle, "name", None) or "?"
+        logger.info("BrewStart: Start at now; %s's AUTO off", name)
+        if requested is not None and requested > now:
+            self.target_start = requested
+            key = self._settings_key(mode, start_time, start_date)
+            await self._keep(key, requested)
+            await self._allow_carrying_on()
+            self.cbpi.notify(self.name, t("notify_heating_stopped", self.language, kettle=name,
+                                          message=self._scheduled_message()), NotificationType.INFO)
+            self._show(self.wall_clock_remaining(now))
+        else:
+            self.target_start = None  # _tick: only Next moves on
+            await self._save()
+            start = self._at(requested) if requested is not None else "?"
+            self.summary = t("summary_passed", self.language, start=start)
+            self._offer_next(t("notify_heating_stopped_passed", self.language, kettle=name, start=start),
+                             NotificationType.WARNING, wrap=False)
+        self._tell_campden(new)
+        await self.push_update()
+
+    def _tell_campden(self, new):
+        """The Campden dose for a new water volume, as saving the step gives it, when the reminder is on."""
+        if {"Volume", "Volume_Unit", "Campden_Reminder"} & set(new):
+            self._say_campden()
+
+    def _tell_strike(self):
+        """CraftBeerPi's strike water helper looks at the settings again now, so its state and the topic "strike"
+        follow a change at once, as after its own POST /step2/strike/water, rather than at its next look. Nothing on
+        a CraftBeerPi without it."""
+        update = getattr(getattr(self.cbpi, "strike", None), "update", None)
+        if not callable(update):
+            return
+        try:
+            update()
+        except Exception as exc:  # noqa: BLE001 - it looks again within a second anyway
+            logger.debug("BrewStart: the strike water helper could not look again - %s", exc)
+
     def _settings_problem(self, now):
         """What would stop these settings starting as meant, or None.
 
@@ -1078,7 +1561,9 @@ class BrewStart(CBPiStep):
     # ----------------------------------------------------------- planning
 
     def _kettle(self, label):
-        kettle_id = self.props.get(label, None)
+        return self._kettle_by_id(self.props.get(label, None))
+
+    def _kettle_by_id(self, kettle_id):
         if not kettle_id:
             return None
         try:

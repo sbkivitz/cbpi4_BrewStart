@@ -153,6 +153,63 @@ MESSAGES = {
             "Choose a later day or time."
         ),
         "change_problem": "BrewStart's time didn't change: {error}",
+        # The action change_settings: any setting, also while the step waits, heats or holds.
+        "action_change_settings": "Change settings",
+        "settings_finished": (
+            "BrewStart has finished, so its settings can't change now. To brew again, reset the brew steps first."
+        ),
+        "settings_unknown": "BrewStart's settings didn't change: it has no setting called '{name}'. Leave it out.",
+        "settings_choice": "BrewStart's settings didn't change: {setting} can't be '{value}'. Choose {choices}.",
+        "settings_or": " or ",
+        "settings_number": (
+            "BrewStart's settings didn't change: {setting} must be a number, not '{value}'. Type a number."
+        ),
+        "settings_positive": (
+            "BrewStart's settings didn't change: {setting} must be more than 0. Type a number above 0."
+        ),
+        "settings_not_negative": "BrewStart's settings didn't change: {setting} can't be below 0. Type 0 for none.",
+        "settings_boiling": (
+            "BrewStart's settings didn't change: water boils at {boil}, so it can't be heated to {temp}. Choose a "
+            "lower temperature."
+        ),
+        "settings_no_kettle": (
+            "BrewStart's settings didn't change: there's no vessel '{value}' on the Hardware page. Choose one that "
+            "is there."
+        ),
+        # The strike water box's own words for too little water in the HLT.
+        "settings_too_little": (
+            "BrewStart's settings didn't change: the HLT holds the strike water too, so at least {min} {unit}."
+        ),
+        "settings_problem": "BrewStart's settings didn't change: {error}",
+        "settings_passed_today": (
+            "{start} has already passed, so BrewStart's settings didn't change. For tomorrow morning, choose "
+            "Tomorrow."
+        ),
+        "settings_passed": (
+            "{start} has already passed, so BrewStart's settings didn't change. Choose a later day or time."
+        ),
+        "settings_arrived": (
+            "BrewStart's time has come ({start}), so when it starts can't change now: press Next Step to go on."
+        ),
+        "settings_cannot_move": (
+            "BrewStart couldn't switch the {new}'s AUTO on, so the heating stays on the {old}. Check the {new}'s "
+            "logic on the Hardware page."
+        ),
+        "settings_changed": "Settings changed.",
+        "notify_time_was": "Time changed, was {was}.",
+        "notify_heating_estimate": (
+            "Ready by {ready}: the {kettle} heats to {target}; from {water} that takes about {heat} min{efficiency}."
+        ),
+        "notify_holding": "The {kettle} holds the water at {target}.",
+        "notify_heating_moved": (
+            "Heating moved from the {old} to the {new}: the {old}'s AUTO is off, and the {new} heats to {target}, "
+            "ready by {ready}."
+        ),
+        "notify_heating_stopped": "BrewStart's heating stopped: the {kettle}'s AUTO is off. {message}",
+        "notify_heating_stopped_passed": (
+            "BrewStart's heating stopped: the {kettle}'s AUTO is off. {start} has passed, so nothing starts by "
+            "itself: press Next Step to go on."
+        ),
         # Ready by heating its kettle itself (1.3.0.post1). The status lines never start
         # with "Start" nor say "heating from": Brew Day reads a waiting step's
         # heating start from those words.
@@ -385,6 +442,72 @@ MESSAGES = {
             "späteres Datum oder eine spätere Uhrzeit wählen."
         ),
         "change_problem": "Die Zeit von BrewStart bleibt: {error}",
+        "action_change_settings": "Einstellungen ändern",
+        "settings_finished": (
+            "BrewStart ist fertig, seine Einstellungen lassen sich nicht mehr ändern. Für einen neuen Sud zuerst die "
+            "Brau-Steps zurücksetzen."
+        ),
+        "settings_unknown": (
+            "Die Einstellungen von BrewStart bleiben: es hat keine Einstellung '{name}'. Weglassen."
+        ),
+        "settings_choice": (
+            "Die Einstellungen von BrewStart bleiben: {setting} kann nicht '{value}' sein. {choices} wählen."
+        ),
+        "settings_or": " oder ",
+        "settings_number": (
+            "Die Einstellungen von BrewStart bleiben: {setting} muss eine Zahl sein, nicht '{value}'. Eine Zahl "
+            "eingeben."
+        ),
+        "settings_positive": (
+            "Die Einstellungen von BrewStart bleiben: {setting} muss größer als 0 sein. Eine Zahl über 0 eingeben."
+        ),
+        "settings_not_negative": (
+            "Die Einstellungen von BrewStart bleiben: {setting} kann nicht unter 0 liegen. 0 für keine eingeben."
+        ),
+        "settings_boiling": (
+            "Die Einstellungen von BrewStart bleiben: Wasser kocht bei {boil}, auf {temp} lässt es sich nicht "
+            "heizen. Eine niedrigere Temperatur wählen."
+        ),
+        "settings_no_kettle": (
+            "Die Einstellungen von BrewStart bleiben: auf der Seite Hardware gibt es kein Gefäß '{value}'. Eines "
+            "wählen, das es gibt."
+        ),
+        "settings_too_little": (
+            "Die Einstellungen von BrewStart bleiben: der HLT enthält auch das Einmaischwasser, also mindestens "
+            "{min} {unit}."
+        ),
+        "settings_problem": "Die Einstellungen von BrewStart bleiben: {error}",
+        "settings_passed_today": (
+            "{start} ist schon vorbei, darum bleiben die Einstellungen von BrewStart. Für morgen früh den Tag auf "
+            "Tomorrow stellen."
+        ),
+        "settings_passed": (
+            "{start} ist schon vorbei, darum bleiben die Einstellungen von BrewStart. Ein späteres Datum oder eine "
+            "spätere Uhrzeit wählen."
+        ),
+        "settings_arrived": (
+            "Die Zeit von BrewStart ist da ({start}), wann es beginnt, lässt sich nicht mehr ändern: Next Step "
+            "drücken, um weiterzumachen."
+        ),
+        "settings_cannot_move": (
+            "BrewStart konnte AUTO von {new} nicht einschalten, darum heizt weiter {old}. Die Logik von {new} auf "
+            "der Seite Hardware prüfen."
+        ),
+        "settings_changed": "Einstellungen geändert.",
+        "notify_time_was": "Zeit geändert, vorher {was}.",
+        "notify_heating_estimate": (
+            "Fertig bis {ready}: {kettle} heizt auf {target}; ab {water} dauert das ca. {heat} min{efficiency}."
+        ),
+        "notify_holding": "{kettle} hält das Wasser auf {target}.",
+        "notify_heating_moved": (
+            "Heizen verlegt von {old} nach {new}: AUTO von {old} ist aus, {new} heizt auf {target}, fertig bis "
+            "{ready}."
+        ),
+        "notify_heating_stopped": "BrewStart heizt nicht mehr: AUTO von {kettle} ist aus. {message}",
+        "notify_heating_stopped_passed": (
+            "BrewStart heizt nicht mehr: AUTO von {kettle} ist aus. {start} ist vorbei, darum startet nichts von "
+            "selbst: Next Step drücken, um weiterzumachen."
+        ),
         "default_mash_tun": "Maischbottich",
         "summary_heating": "Heizt auf {target} · fertig bis {ready}",
         "summary_heating_late": "Heizt auf {target} · zu spät für {ready}",
