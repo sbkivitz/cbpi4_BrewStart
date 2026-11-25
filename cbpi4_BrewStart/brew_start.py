@@ -62,6 +62,16 @@ try:
 except ImportError:  # a core before CLOCK_FORMAT (4.7.7.post60): no setting, so 24-hour
     _core_twelve_hour = None
 
+try:
+    # The least water the HLT keeps over its element and coil, and the HLT it is kept in, as CraftBeerPi's strike
+    # water box counts them (4.7.7.post77): its own least water on the Hardware page, else a share of its capacity,
+    # else a cautious figure.
+    from cbpi.extension.hltpump import find_hlt as _core_find_hlt
+    from cbpi.strike.vessels import LEAST_SHARE as _CORE_LEAST_SHARE
+    from cbpi.strike.vessels import least_water as _core_least_water
+except ImportError:  # an older core: the HLT keeps back only the strike water
+    _core_find_hlt = _core_least_water = _CORE_LEAST_SHARE = None
+
 
 def configured_twelve_hour(cbpi):
     """Whether CraftBeerPi's CLOCK_FORMAT shows times of day in 12-hour form
@@ -1277,8 +1287,10 @@ class BrewStart(CBPiStep):
         return round(infuse_l / L_PER_GAL if unit == "gal" else infuse_l, 2)
 
     def _check_water(self, new):
-        """Volume, or a new Volume_Unit, never under the recipe's strike water: the HLT holds the strike water too.
-        The strike water box's own minimum and words (POST /step2/strike/water's too_little). Raises _Refusal."""
+        """Volume, or a new Volume_Unit, never under the recipe's strike water and the least water the HLT keeps over
+        its element and coil once the strike water has gone: the rule and the words of CraftBeerPi's strike water box
+        (POST /step2/strike/water's too_little), so the box and this action take and refuse the same water. Nothing is
+        refused while the recipe doesn't give its strike water. Raises _Refusal."""
         if "Volume" not in new and "Volume_Unit" not in new:
             return
         try:
@@ -1286,9 +1298,55 @@ class BrewStart(CBPiStep):
         except (TypeError, ValueError):
             return
         unit = self._volume_unit()
-        least = self._strike_water(unit)
-        if least is not None and volume < least - 1e-9:
-            raise _Refusal(t("settings_too_little", self.language, min="{:.2f}".format(least), unit=unit))
+        strike = self._strike_water(unit)
+        if strike is None:
+            return
+        least = self._hlt_least(unit)
+        if least is None:
+            if volume < strike - 1e-9:
+                raise _Refusal(t("settings_too_little", self.language, min="{:.2f}".format(strike), unit=unit))
+            return
+        if volume - strike < least["value"] - 1e-9:
+            raise _Refusal(self._too_little_words(volume, strike, least, unit))
+
+    def _hlt_least(self, unit):
+        """{"value", "from", "capacity"}: the least water the HLT keeps over its element and coil, in `unit` ("gal" or
+        "L"), as the strike water box counts it (cbpi.strike.vessels.least_water, for the HLT core's find_hlt finds);
+        None on a core without it."""
+        if _core_least_water is None:
+            return None
+        try:
+            hlt = _core_find_hlt(self.cbpi)
+        except Exception:  # noqa: BLE001 - an HLT that can't be found has the cautious figure, as in the box
+            hlt = None
+        try:
+            return _core_least_water(hlt, "F" if is_fahrenheit(self._unit()) else "C", unit)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("BrewStart: could not count the HLT's least water: %s", e)
+            return None
+
+    def _too_little_words(self, volume, strike, least, unit):
+        """The strike water box's refusal of too little HLT water (hltWaterRefused), after "BrewStart's settings didn't
+        change:". Figures and units joined by a no-break space, as the box joins them."""
+        def vol(x):
+            return "{:.2f}\u00a0{}".format(x, unit)
+
+        def short(x):
+            return "{}\u00a0{}".format(("%.2f" % x).rstrip("0").rstrip("."), unit)
+
+        if least["from"] == "hardware":
+            source = t("settings_least_hardware", self.language)
+        elif least["from"] == "capacity":
+            share = int(round((_CORE_LEAST_SHARE or 0) * 100))
+            source = (t("settings_least_capacity", self.language, share=share, capacity=short(least["capacity"]))
+                      if least.get("capacity") is not None
+                      else t("settings_least_capacity_unknown", self.language, share=share))
+        else:
+            source = t("settings_least_default", self.language, least=short(least["value"]))
+        left = round(volume - strike, 2)
+        return t("settings_hlt_water_left" if left >= 0 else "settings_hlt_water_under", self.language,
+                 hlt=vol(volume), left=vol(left), mash=vol(strike), least=vol(least["value"]), source=source,
+                 min=vol(round(strike + least["value"], 2)))
 
     def _settings_requested(self, now):
         """The moment the settings ask for, worked out from `now` as START works it out. Raises _Refusal for one that
