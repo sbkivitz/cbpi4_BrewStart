@@ -142,7 +142,7 @@ def test_its_words_are_in_german_too():
     keys = [k for k in MESSAGES["en"] if k.startswith("settings_") or k in (
         "action_change_settings", "notify_time_was", "notify_heating_estimate", "notify_holding",
         "notify_heating_moved", "notify_heating_moved_now", "notify_heating_estimate_now", "notify_heating_plain")]
-    assert len(keys) == 30
+    assert len(keys) == 25
     missing = [k for k in keys if k not in MESSAGES["de"]]
     assert missing == []
     assert MESSAGES["de"]["settings_too_little"] != MESSAGES["en"]["settings_too_little"]
@@ -414,52 +414,59 @@ def hlt_on_hardware(server, min_water=None, capacity=None):
     server.kettle.data = list(server.kettle.kettles.values())
 
 
-def test_never_less_water_than_the_strike_water_and_the_hlts_least(monkeypatch):
+def warned(server):
+    """The warnings every screen was told of, in their words."""
+    return [n.message for n in server.notes if n.type == NotificationType.WARNING]
+
+
+def test_water_under_the_hlts_least_is_taken_with_one_warning(monkeypatch):
     # No HLT the box can find on the Hardware page: its cautious 3 gal.
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
-    assert refused(server, step, Volume=8.24) == (
-        f"BrewStart's settings didn't change: HLT water 8.24{NB}gal would leave 2.99{NB}gal in the HLT after the "
-        f"5.25{NB}gal of mash water. The HLT needs at least 3.00{NB}gal over its element and coil (a cautious "
-        f"3{NB}gal, as the Hardware page gives neither its least water nor its capacity), so the HLT water has to be "
-        f"at least 8.25{NB}gal.")
-    assert refused(server, step, Volume=5) == (
-        f"BrewStart's settings didn't change: HLT water 5.00{NB}gal is less than the 5.25{NB}gal of mash water. The "
-        f"HLT needs at least 3.00{NB}gal over its element and coil (a cautious 3{NB}gal, as the Hardware page gives "
-        f"neither its least water nor its capacity), so the HLT water has to be at least 8.25{NB}gal.")
-    assert refused(server, step, Volume_Unit="L").endswith(
-        f"(a cautious 11.4{NB}L, as the Hardware page gives neither its least water nor its capacity), so the HLT "
-        f"water has to be at least 31.27{NB}L.")
-    change(step, Volume=8.25)
-    assert step.props["Volume"] == 8.25
+    change(step, Volume=8.24)
+    assert step.props["Volume"] == 8.24, "the figure is taken"
+    assert warned(server) == [f"Leaves 2.99{NB}gal in the HLT, under its 3.00{NB}gal minimum."], \
+        "said once, to two places where one would show them the same"
+    assert server.strike.looks, "the strike water helper is told of the change"
+    server.notes.clear()
+    change(step, Volume=5.75)
+    assert (step.props["Volume"], warned(server)) == (5.75, [f"Leaves 0.5{NB}gal in the HLT, under its 3.0{NB}gal minimum."])
+    server.notes.clear()
+    change(step, Volume=21.87, Volume_Unit="L")
+    assert warned(server) == [f"Leaves 2.0{NB}L in the HLT, under its 11.4{NB}L minimum."]
+    server.notes.clear()
+    change(step, Volume=31.27)
+    assert (step.props["Volume"], warned(server)) == (31.27, []), "exactly the least is enough"
+
+
+def test_never_less_water_than_the_strike_water(monkeypatch):
+    server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
+    assert refused(server, step, Volume=5) == ("BrewStart's settings didn't change: the HLT holds the strike water "
+                                               "too, so at least 5.25 gal.")
+    assert warned(server) == []
 
 
 def test_the_hlts_own_least_water_from_the_hardware_page(monkeypatch):
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
     hlt_on_hardware(server, min_water=4, capacity=20)
-    assert refused(server, step, Volume=9.24) == (
-        f"BrewStart's settings didn't change: HLT water 9.24{NB}gal would leave 3.99{NB}gal in the HLT after the "
-        f"5.25{NB}gal of mash water. The HLT needs at least 4.00{NB}gal over its element and coil (its least water on "
-        f"the Hardware page), so the HLT water has to be at least 9.25{NB}gal.")
+    change(step, Volume=9.24)
+    assert warned(server) == [f"Leaves 3.99{NB}gal in the HLT, under its 4.00{NB}gal minimum."]
+    server.notes.clear()
     change(step, Volume=9.25)
-    assert step.props["Volume"] == 9.25
+    assert (step.props["Volume"], warned(server)) == (9.25, [])
 
 
 def test_the_hlts_least_water_from_its_capacity_in_either_unit(monkeypatch):
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
     hlt_on_hardware(server, capacity=20)
-    assert refused(server, step, Volume=8) == (
-        f"BrewStart's settings didn't change: HLT water 8.00{NB}gal would leave 2.75{NB}gal in the HLT after the "
-        f"5.25{NB}gal of mash water. The HLT needs at least 3.00{NB}gal over its element and coil (15% of its "
-        f"20{NB}gal capacity, until its least water is set on the Hardware page), so the HLT water has to be at "
-        f"least 8.25{NB}gal.")
+    change(step, Volume=8)
+    assert warned(server) == [f"Leaves 2.8{NB}gal in the HLT, under its 3.0{NB}gal minimum."]
+    server.notes.clear()
     # In litres: its 20 gal are 75.71 L, 15 % of them 11.36 L, and the strike water 19.87 L.
-    assert refused(server, step, Volume=31.22, Volume_Unit="L") == (
-        f"BrewStart's settings didn't change: HLT water 31.22{NB}L would leave 11.35{NB}L in the HLT after the "
-        f"19.87{NB}L of mash water. The HLT needs at least 11.36{NB}L over its element and coil (15% of its "
-        f"75.71{NB}L capacity, until its least water is set on the Hardware page), so the HLT water has to be at "
-        f"least 31.23{NB}L.")
-    change(step, Volume=31.23, Volume_Unit="L")
-    assert (step.props["Volume"], step.props["Volume_Unit"]) == (31.23, "L")
+    change(step, Volume=31.22, Volume_Unit="L")
+    assert warned(server) == [f"Leaves 11.3{NB}L in the HLT, under its 11.4{NB}L minimum."]
+    server.notes.clear()
+    change(step, Volume=31.23)
+    assert (step.props["Volume"], step.props["Volume_Unit"], warned(server)) == (31.23, "L", [])
 
 
 def test_on_a_core_without_the_hlts_least_water_the_strike_water_alone(monkeypatch):
@@ -468,26 +475,21 @@ def test_on_a_core_without_the_hlts_least_water_the_strike_water_alone(monkeypat
     assert refused(server, step, Volume=5) == ("BrewStart's settings didn't change: the HLT holds the strike water "
                                                "too, so at least 5.25 gal.")
     change(step, Volume=5.25)
-    assert step.props["Volume"] == 5.25
+    assert (step.props["Volume"], warned(server)) == (5.25, [])
 
 
 def test_any_water_without_the_recipes_strike_water(monkeypatch):
     server, step, _ = waiting(monkeypatch)
     change(step, Volume=1)
-    assert step.props["Volume"] == 1.0
+    assert (step.props["Volume"], warned(server)) == (1.0, [])
 
 
-def test_too_little_water_in_german(monkeypatch):
+def test_the_warning_in_german(monkeypatch):
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
     hlt_on_hardware(server, min_water=4)
     monkeypatch.setattr(bs, "configured_language", lambda cbpi: "de")
-    assert refused(server, step, Volume=9) == (
-        f"Die Einstellungen von BrewStart bleiben: HLT-Wasser 9.00{NB}gal ließe nach den 5.25{NB}gal Einmaischwasser "
-        f"3.75{NB}gal im HLT. Der HLT braucht mindestens 4.00{NB}gal über Heizstab und Spirale (seine "
-        f"Mindestwassermenge auf der Seite Hardware), also muss das HLT-Wasser mindestens 9.25{NB}gal sein.")
-    hlt_on_hardware(server, capacity=20)
-    assert "(15 % seines Fassungsvermögens von 20\u00a0gal, bis seine Mindestwassermenge auf der Seite Hardware " \
-           "eingetragen ist)" in refused(server, step, Volume=8)
+    change(step, Volume=9)
+    assert warned(server) == [f"Lässt 3.8{NB}gal im HLT, unter seinem Minimum von 4.0{NB}gal."]
 
 
 # ----------------------------------------------------------- refused

@@ -176,31 +176,12 @@ MESSAGES = {
             "BrewStart's settings didn't change: there's no vessel '{value}' on the Hardware page. Choose one that "
             "is there."
         ),
-        # The strike water box's own words for too little water in the HLT: on a core without the HLT's least water,
-        # the strike water alone.
+        # The strike water box's own words for too little water in the HLT.
         "settings_too_little": (
             "BrewStart's settings didn't change: the HLT holds the strike water too, so at least {min} {unit}."
         ),
-        # The box's words where the HLT also keeps the least water that covers its element and coil (hltWaterRefused).
-        "settings_hlt_water_left": (
-            "BrewStart's settings didn't change: HLT water {hlt} would leave {left} in the HLT after the {mash} of "
-            "mash water. The HLT needs at least {least} over its element and coil ({source}), so the HLT water has to "
-            "be at least {min}."
-        ),
-        "settings_hlt_water_under": (
-            "BrewStart's settings didn't change: HLT water {hlt} is less than the {mash} of mash water. The HLT needs "
-            "at least {least} over its element and coil ({source}), so the HLT water has to be at least {min}."
-        ),
-        "settings_least_hardware": "its least water on the Hardware page",
-        "settings_least_capacity": (
-            "{share}% of its {capacity} capacity, until its least water is set on the Hardware page"
-        ),
-        "settings_least_capacity_unknown": (
-            "{share}% of its capacity, until its least water is set on the Hardware page"
-        ),
-        "settings_least_default": (
-            "a cautious {least}, as the Hardware page gives neither its least water nor its capacity"
-        ),
+        # The box's warning where the water leaves the HLT less than covers its element and coil (hlt_low).
+        "settings_hlt_low": "Leaves {left} in the HLT, under its {least} minimum.",
         "settings_problem": "BrewStart's settings didn't change: {error}",
         "settings_passed_today": (
             "{start} has already passed, so BrewStart's settings didn't change. For tomorrow morning, choose "
@@ -503,28 +484,7 @@ MESSAGES = {
             "Die Einstellungen von BrewStart bleiben: der HLT enthält auch das Einmaischwasser, also mindestens "
             "{min} {unit}."
         ),
-        "settings_hlt_water_left": (
-            "Die Einstellungen von BrewStart bleiben: HLT-Wasser {hlt} ließe nach den {mash} Einmaischwasser {left} im "
-            "HLT. Der HLT braucht mindestens {least} über Heizstab und Spirale ({source}), also muss das HLT-Wasser "
-            "mindestens {min} sein."
-        ),
-        "settings_hlt_water_under": (
-            "Die Einstellungen von BrewStart bleiben: HLT-Wasser {hlt} ist weniger als die {mash} Einmaischwasser. Der "
-            "HLT braucht mindestens {least} über Heizstab und Spirale ({source}), also muss das HLT-Wasser mindestens "
-            "{min} sein."
-        ),
-        "settings_least_hardware": "seine Mindestwassermenge auf der Seite Hardware",
-        "settings_least_capacity": (
-            "{share} % seines Fassungsvermögens von {capacity}, bis seine Mindestwassermenge auf der Seite Hardware "
-            "eingetragen ist"
-        ),
-        "settings_least_capacity_unknown": (
-            "{share} % seines Fassungsvermögens, bis seine Mindestwassermenge auf der Seite Hardware eingetragen ist"
-        ),
-        "settings_least_default": (
-            "vorsichtige {least}, da die Seite Hardware weder seine Mindestwassermenge noch sein Fassungsvermögen "
-            "angibt"
-        ),
+        "settings_hlt_low": "Lässt {left} im HLT, unter seinem Minimum von {least}.",
         "settings_problem": "Die Einstellungen von BrewStart bleiben: {error}",
         "settings_passed_today": (
             "{start} ist schon vorbei, darum bleiben die Einstellungen von BrewStart. Für morgen früh den Tag auf "
