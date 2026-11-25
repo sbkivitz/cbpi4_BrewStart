@@ -213,7 +213,7 @@ def test_waiting_start_at_heats_from_its_time_whatever_autonext_says(monkeypatch
     wall.at = step.target_start + timedelta(seconds=1)
     assert tick(step, wall) is False and step.heating and server.kettle.auto("hlt") == (True, 152)
     server.water(152.0)
-    assert tick(step, wall, 5) is False and [n.message for n in server.questions()] == ["Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT."]
+    assert tick(step, wall, 5) is False and [n.message for n in server.questions()] == ["Hot at 152.0 \u00b0F. Move it to the Mash Tun, connect the hoses, then NEXT."]
     assert tick(step, wall, 120) is False, "it moved on by itself"
 
 
@@ -300,7 +300,7 @@ def test_heating_a_new_vessel_moves_the_heating_old_off_first(monkeypatch):
                             "and the Boil Kettle heats to 152.0 °F, ready by Sat Oct 24, 07:00."]
     server.readings["bk-probe"]["value"] = 152.0
     tick(step, wall, 5)
-    assert [n.message for n in server.questions()] == ["Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT."]
+    assert [n.message for n in server.questions()] == ["Hot at 152.0 \u00b0F. Move it to the Mash Tun, connect the hoses, then NEXT."]
 
 
 def test_heating_a_vessel_whose_auto_wont_go_on_is_refused_and_the_old_one_heats_again(monkeypatch):

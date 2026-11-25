@@ -36,8 +36,7 @@ from test_heats_its_kettle import READY_BY, Server, Wall, make, settle  # noqa: 
 
 NIGHT = datetime(2026, 10, 23, 22, 0, 0)
 READY = datetime(2026, 10, 24, 7, 0, 0)
-ASK = ("Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and "
-       "connected the hoses and pumps for recirculating, press NEXT.")
+ASK = "Hot at 152.0 \u00b0F. Move it to the Mash Tun, connect the hoses, then NEXT."
 
 
 class HandClock(clock.TimeSource):

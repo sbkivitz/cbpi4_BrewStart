@@ -241,11 +241,9 @@ MESSAGES = {
         "summary_heating_now": "Heating to {target}",
         "summary_heating_late": "Heating to {target} · late for {ready}",
         "summary_water_ready": "Holding {target} · move the strike water",
-        # The strike water step's own sentence on the rig page's recipe.
-        "notify_water_ready": (
-            "Strike water hot and holding at {target}. When you've moved the strike water to the {to} and "
-            "connected the hoses and pumps for recirculating, press NEXT."
-        ),
+        # Word for word as Brew Day's row says it (bsHoldWords in the web UI), with and without the temperature.
+        "notify_water_ready": "Hot at {target}. Move it to the {to}, connect the hoses, then NEXT.",
+        "notify_water_ready_hot": "The water is hot. Move it to the {to}, connect the hoses, then NEXT.",
         "notify_water_late": (
             "The water isn't ready by {ready}: the {kettle} reads {water}, short of {target}. BrewStart "
             "carries on heating it, and asks you to move it once it's there."
@@ -566,10 +564,8 @@ MESSAGES = {
         "summary_heating_now": "Heizt auf {target}",
         "summary_heating_late": "Heizt auf {target} · zu spät für {ready}",
         "summary_water_ready": "Hält {target} · Maischwasser umfüllen",
-        "notify_water_ready": (
-            "Einmaischwasser heiß, gehalten auf {target}. Wenn das Einmaischwasser im {to} ist und die "
-            "Schläuche und Pumpen zum Umwälzen angeschlossen sind, NEXT drücken."
-        ),
+        "notify_water_ready": "Heiß auf {target}. In den {to} umfüllen, Schläuche anschließen, dann NEXT.",
+        "notify_water_ready_hot": "Das Wasser ist heiß. In den {to} umfüllen, Schläuche anschließen, dann NEXT.",
         "notify_water_late": (
             "Das Wasser ist bis {ready} nicht fertig: {kettle} misst {water}, Ziel {target}. BrewStart "
             "heizt weiter und bittet ums Umfüllen, sobald es so weit ist."

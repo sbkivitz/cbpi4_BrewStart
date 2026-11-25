@@ -392,7 +392,7 @@ class BrewStart(CBPiStep):
         await self._hand_over()
 
     async def WaterMoved(self, **kwargs):
-        """Next Step on "Move the strike water to the Mash Tun, then press Next":
+        """Next Step on "Hot at ... Move it to the Mash Tun, connect the hoses, then NEXT.":
         the brewer has moved the water. Only this, or the screens' NEXT, moves a
         Ready by BrewStart on - on_stop switches Heat_Kettle's AUTO off before
         the next step starts - and the next step is the brewer's to carry on
@@ -892,7 +892,7 @@ class BrewStart(CBPiStep):
         self._ask()
 
     def _ask(self):
-        """"Move the strike water to the Mash Tun, then press Next", with Next
+        """"Hot at ... Move it to the Mash Tun, connect the hoses, then NEXT.", with Next
         Step, as the strike water step on the HLT asks it: kept on every page
         until answered, and taken down when the step stops or ends. Its button is
         the only thing that moves BrewStart on, with the screens'
@@ -902,10 +902,12 @@ class BrewStart(CBPiStep):
             kept = {"keep": True} if "keep" in inspect.signature(notify).parameters else {}
         except (TypeError, ValueError):
             kept = {}
+        target, to = self._ready_temp(), self._next_kettle_name()
+        words = (t("notify_water_ready_hot", self.language, to=to) if target is None else
+                 t("notify_water_ready", self.language, to=to, target=format_temp(target, self._unit())))
         question = notify(
             self.name,
-            t("notify_water_ready", self.language, to=self._next_kettle_name(),
-              target=format_temp(self._ready_temp() or 0, self._unit())),
+            words,
             NotificationType.INFO,
             action=[NotificationAction(t("action_next_step", self.language), self.WaterMoved)],
             **kept,

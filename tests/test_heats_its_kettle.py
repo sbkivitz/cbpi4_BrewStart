@@ -11,8 +11,8 @@ On the real step, with the server faked as far as the step reaches into it, thes
 - at the heating start Heat_Kettle's target is Ready_Temp and its AUTO on, and the step stays: it never moves on by
   itself, and never switches an actor, the Mash Tun's pump included;
 - a ready time too soon for the heating heats at once;
-- once the water reads Ready_Temp it holds it and asks, once: the step's name, "Move the strike water to the Mash
-  Tun, then press Next", one action, Next Step, kept until answered;
+- once the water reads Ready_Temp it holds it and asks, once: the step's name, "Hot at ... Move it to the Mash
+  Tun, connect the hoses, then NEXT.", one action, Next Step, kept until answered;
 - Next - the question's, or the screen's - switches Heat_Kettle's AUTO off before the next step starts, and so does
   Stop;
 - the ready time coming first is said once, with the reading, and the heating carries on;
@@ -278,7 +278,7 @@ def test_at_ready_temp_it_holds_and_asks_once(monkeypatch):
     asked = server.questions()
     assert len(asked) == 1, [n.message for n in server.notes]
     question = asked[0]
-    assert (question.title, question.message) == (NAME, "Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT.")
+    assert (question.title, question.message) == (NAME, "Hot at 152.0 \u00b0F. Move it to the Mash Tun, connect the hoses, then NEXT.")
     assert question.labels() == ["Next Step"] and question.keep is True
     assert server.step.kept == {("bs", "water"): "n{}".format(server.notes.index(question) + 1)}
     assert step.props[bs.BrewStart.ASKED_PROP] is True
@@ -288,6 +288,30 @@ def test_at_ready_temp_it_holds_and_asks_once(monkeypatch):
         assert tick(step, wall, minutes) is False
     assert len(server.questions()) == 1
     assert server.kettle.auto("hlt") == (True, 152)
+
+
+def test_the_question_names_the_next_vessel_in_the_brewerys_unit(monkeypatch):
+    wall = Wall(NIGHT)
+    wall.install(monkeypatch)
+    server = Server(hlt=20.0)
+    server.config = types.SimpleNamespace(get=lambda k, default=None: {"TEMP_UNIT": "C"}.get(k, default))
+    server.kettle.kettles["mt"].name = "Big Tun"
+    server, step = make(server=server, props=dict(READY_BY, Ready_Temp=66.7))
+    asyncio.run(step.on_start())
+    step.running = True
+    wall.at = step.target_start + timedelta(seconds=1)
+    assert asyncio.run(step._tick(wall.at, 100000.0)) is False
+    server.water(66.7)
+    assert tick(step, wall, 1) is False
+    assert [n.message for n in server.questions()] == ["Hot at 66.7 \u00b0C. Move it to the Big Tun, connect the hoses, then NEXT."]
+    assert step.summary == "Holding 66.7 \u00b0C · move the strike water"
+
+
+def test_with_no_temperature_the_question_says_the_water_is_hot(monkeypatch):
+    server, step, _ = heating(monkeypatch)
+    step.props["Ready_Temp"] = ""
+    step._ask()
+    assert [n.message for n in server.questions()] == ["The water is hot. Move it to the Mash Tun, connect the hoses, then NEXT."]
 
 
 def lifecycle(monkeypatch, then):
@@ -576,12 +600,14 @@ def test_the_status_lines_never_read_as_a_heating_start(monkeypatch):
 
 def test_the_new_words_are_in_german_too():
     new = ("default_mash_tun", "summary_heating", "summary_heating_late", "summary_water_ready",
-           "notify_water_ready", "notify_water_late", "notify_ready_time_changed", "notify_cannot_heat",
+           "notify_water_ready", "notify_water_ready_hot", "notify_water_late", "notify_ready_time_changed",
+           "notify_cannot_heat",
            "notify_start_time_changed", "notify_start_at_scheduled", "notify_start_at_reached", "summary_heating_now",
            "action_heat_now", "notify_heat_now", "notify_passed_today_heat_now", "notify_passed_heat_now",
            "notify_too_late_heat_now", "change_waiting_heat_now")
     for key in new:
         assert key in MESSAGES["en"] and key in MESSAGES["de"] and MESSAGES["de"][key] != MESSAGES["en"][key], key
     assert MESSAGES["en"]["notify_water_ready"].format(to="Mash Tun", target="130.7 \u00b0F") == (
-        "Strike water hot and holding at 130.7 \u00b0F. When you've moved the strike water to the Mash Tun and "
-        "connected the hoses and pumps for recirculating, press NEXT.")
+        "Hot at 130.7 \u00b0F. Move it to the Mash Tun, connect the hoses, then NEXT.")
+    assert MESSAGES["de"]["notify_water_ready"].format(to="Maischbottich", target="54.8 \u00b0C") == (
+        "Hei\u00df auf 54.8 \u00b0C. In den Maischbottich umf\u00fcllen, Schl\u00e4uche anschlie\u00dfen, dann NEXT.")

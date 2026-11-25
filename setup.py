@@ -8,7 +8,7 @@ with open(path.join(this_directory, "README.md"), encoding="utf-8") as f:
 
 setup(
     name="cbpi4_BrewStart",
-    version="1.3.0.post8",
+    version="1.3.0.post9",
     description="CraftBeerPi4: heats the strike water at a set time and holds it until Next, + step status actors",
     author="CraftBeerPi Community",
     url="https://github.com/braubunker/cbpi4_BrewStart",
