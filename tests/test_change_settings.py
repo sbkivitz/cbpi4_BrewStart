@@ -145,7 +145,7 @@ def test_its_words_are_in_german_too():
     assert len(keys) == 25
     missing = [k for k in keys if k not in MESSAGES["de"]]
     assert missing == []
-    assert MESSAGES["de"]["settings_too_little"] != MESSAGES["en"]["settings_too_little"]
+    assert MESSAGES["de"]["settings_hlt_under"] != MESSAGES["en"]["settings_hlt_under"]
 
 
 # ----------------------------------------------------------- waiting
@@ -438,11 +438,11 @@ def test_water_under_the_hlts_least_is_taken_with_one_warning(monkeypatch):
     assert (step.props["Volume"], warned(server)) == (31.27, []), "exactly the least is enough"
 
 
-def test_never_less_water_than_the_strike_water(monkeypatch):
+def test_less_water_than_the_strike_water_is_taken_with_one_warning(monkeypatch):
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
-    assert refused(server, step, Volume=5) == ("BrewStart's settings didn't change: the HLT holds the strike water "
-                                               "too, so at least 5.25 gal.")
-    assert warned(server) == []
+    change(step, Volume=5)
+    assert step.props["Volume"] == 5.0, "the figure is taken"
+    assert warned(server) == [f"Less than the 5.3{NB}gal of mash water."], "said once, in place of the least's"
 
 
 def test_the_hlts_own_least_water_from_the_hardware_page(monkeypatch):
@@ -472,8 +472,9 @@ def test_the_hlts_least_water_from_its_capacity_in_either_unit(monkeypatch):
 def test_on_a_core_without_the_hlts_least_water_the_strike_water_alone(monkeypatch):
     monkeypatch.setattr(bs, "_core_least_water", None)
     server, step, _ = waiting(monkeypatch, strike_l=STRIKE_L)
-    assert refused(server, step, Volume=5) == ("BrewStart's settings didn't change: the HLT holds the strike water "
-                                               "too, so at least 5.25 gal.")
+    change(step, Volume=5)
+    assert (step.props["Volume"], warned(server)) == (5.0, [f"Less than the 5.3{NB}gal of mash water."])
+    server.notes.clear()
     change(step, Volume=5.25)
     assert (step.props["Volume"], warned(server)) == (5.25, [])
 
@@ -490,6 +491,9 @@ def test_the_warning_in_german(monkeypatch):
     monkeypatch.setattr(bs, "configured_language", lambda cbpi: "de")
     change(step, Volume=9)
     assert warned(server) == [f"Lässt 3.8{NB}gal im HLT, unter seinem Minimum von 4.0{NB}gal."]
+    server.notes.clear()
+    change(step, Volume=5)
+    assert warned(server) == [f"Weniger als die 5.3{NB}gal Einmaischwasser."]
 
 
 # ----------------------------------------------------------- refused

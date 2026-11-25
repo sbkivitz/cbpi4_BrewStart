@@ -176,11 +176,9 @@ MESSAGES = {
             "BrewStart's settings didn't change: there's no vessel '{value}' on the Hardware page. Choose one that "
             "is there."
         ),
-        # The strike water box's own words for too little water in the HLT.
-        "settings_too_little": (
-            "BrewStart's settings didn't change: the HLT holds the strike water too, so at least {min} {unit}."
-        ),
-        # The box's warning where the water leaves the HLT less than covers its element and coil (hlt_low).
+        # The strike water box's warnings: less HLT water than the mash water (hlt_under), and water that leaves the HLT
+        # less than covers its element and coil (hlt_low).
+        "settings_hlt_under": "Less than the {mash} of mash water.",
         "settings_hlt_low": "Leaves {left} in the HLT, under its {least} minimum.",
         "settings_problem": "BrewStart's settings didn't change: {error}",
         "settings_passed_today": (
@@ -480,10 +478,7 @@ MESSAGES = {
             "Die Einstellungen von BrewStart bleiben: auf der Seite Hardware gibt es kein Gefäß '{value}'. Eines "
             "wählen, das es gibt."
         ),
-        "settings_too_little": (
-            "Die Einstellungen von BrewStart bleiben: der HLT enthält auch das Einmaischwasser, also mindestens "
-            "{min} {unit}."
-        ),
+        "settings_hlt_under": "Weniger als die {mash} Einmaischwasser.",
         "settings_hlt_low": "Lässt {left} im HLT, unter seinem Minimum von {least}.",
         "settings_problem": "Die Einstellungen von BrewStart bleiben: {error}",
         "settings_passed_today": (

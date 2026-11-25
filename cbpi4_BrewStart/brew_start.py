@@ -1,4 +1,5 @@
 import asyncio
+import decimal
 import inspect
 import logging
 import math
@@ -70,6 +71,16 @@ try:
     from cbpi.strike.vessels import least_water as _core_least_water
 except ImportError:  # an older core: no least water to warn of
     _core_find_hlt = _core_least_water = None
+
+
+def _figure(x, places):
+    """x to `places` places, halves up, as CraftBeerPi's web UI shows it."""
+    return str(decimal.Decimal(repr(float(x))).quantize(decimal.Decimal(1).scaleb(-places), decimal.ROUND_HALF_UP))
+
+
+def _places(a, b):
+    """One place, or two where one would show a and b the same."""
+    return 1 if _figure(a, 1) != _figure(b, 1) else 2
 
 
 def configured_twelve_hour(cbpi):
@@ -1145,9 +1156,9 @@ class BrewStart(CBPiStep):
         - Start at, its time come: when it starts can't change; anything else is saved.
         - Heating or holding: _change_while_heating.
 
-        Volume is never less than the recipe's strike water, the minimum CraftBeerPi's strike water box keeps
-        (_check_water). Volume that leaves the HLT less than its least water once the strike water has gone is taken,
-        with a warning (_warn_water). The strike water helper is told of a change at once (_tell_strike).
+        Volume less than the recipe's strike water, or that leaves the HLT less than its least water once the strike
+        water has gone, is taken, with a warning (_warn_water). The strike water helper is told of a change at once
+        (_tell_strike).
 
         Always this step's own settings, changed in place, saved as the step's own saves are: never a new step built
         and swapped in, which would leave this one running out of Stop's reach, its kettle heating, or lose what the
@@ -1302,34 +1313,30 @@ class BrewStart(CBPiStep):
         strike = self._strike_water(unit)
         return None if strike is None else (volume, strike, unit)
 
-    def _check_water(self, new):
-        """Volume, or a new Volume_Unit, never under the recipe's strike water: the HLT holds the strike water too, as
-        CraftBeerPi's strike water box keeps it (POST /step2/strike/water's too_little). Nothing is refused while the
-        recipe doesn't give its strike water. Raises _Refusal."""
-        water = self._water(new)
-        if water is None:
-            return
-        volume, strike, unit = water
-        if volume < strike - 1e-9:
-            raise _Refusal(t("settings_too_little", self.language, min="{:.2f}".format(strike), unit=unit))
-
     def _warn_water(self, new):
-        """Volume, or a new Volume_Unit, taken that leaves the HLT less than the least water that covers its element
-        and coil once the strike water has gone: said to every screen as a warning, in the strike water box's words
-        ("Leaves 0.5 gal in the HLT, under its 3.0 gal minimum."). The least is core's own
-        (cbpi.strike.vessels.least_water), so the box and this action warn of the same water. A warning, never a
-        refusal: the figure is typed, and nothing switches on it."""
+        """Volume, or a new Volume_Unit, taken though it is less than the recipe's strike water, or leaves the HLT less
+        than the least water that covers its element and coil once the strike water has gone: said to every screen
+        once, as a warning, in the strike water box's words ("Less than the 19.5 gal of mash water.", "Leaves 0.5 gal
+        in the HLT, under its 3.0 gal minimum."). The least is core's own (cbpi.strike.vessels.least_water), so the box
+        and this action warn of the same water. A warning, never a refusal: the figure is typed, and nothing switches
+        on it."""
         water = self._water(new)
         if water is None:
             return
         volume, strike, unit = water
-        least = self._hlt_least(unit)
-        if least is None or volume - strike >= least["value"] - 1e-9:
-            return
-        left, low = max(volume - strike, 0.0), least["value"]
-        places = 1 if round(left, 1) < round(low, 1) else 2
-        words = t("settings_hlt_low", self.language, left="{:.{}f}\u00a0{}".format(left, places, unit),
-                  least="{:.{}f}\u00a0{}".format(low, places, unit))
+
+        def vol(x, places):
+            return "{}\u00a0{}".format(_figure(x, places), unit)
+
+        if volume - strike < -1e-9:
+            words = t("settings_hlt_under", self.language, mash=vol(strike, _places(volume, strike)))
+        else:
+            least = self._hlt_least(unit)
+            if least is None or volume - strike >= least["value"] - 1e-9:
+                return
+            left, low = volume - strike, least["value"]
+            places = _places(left, low)
+            words = t("settings_hlt_low", self.language, left=vol(left, places), least=vol(low, places))
         logger.info("BrewStart: %s", words)
         self.cbpi.notify(self.name, words, NotificationType.WARNING)
 
@@ -1370,7 +1377,6 @@ class BrewStart(CBPiStep):
         anything outside the settings has changed - or, for a vessel that won't take the heating, with the heating
         put back - and change_settings puts the settings back."""
         when = any(name in new for name in WHEN_SETTINGS)
-        self._check_water(new)
         now = brewing_now()
         if self.running is not True:
             if when:
