@@ -278,7 +278,7 @@ def test_at_ready_temp_it_holds_and_asks_once(monkeypatch):
     asked = server.questions()
     assert len(asked) == 1, [n.message for n in server.notes]
     question = asked[0]
-    assert (question.title, question.message) == (NAME, "Move the strike water to the Mash Tun, then press Next")
+    assert (question.title, question.message) == (NAME, "Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT.")
     assert question.labels() == ["Next Step"] and question.keep is True
     assert server.step.kept == {("bs", "water"): "n{}".format(server.notes.index(question) + 1)}
     assert step.props[bs.BrewStart.ASKED_PROP] is True
@@ -444,9 +444,7 @@ def test_a_restart_while_holding_holds_with_no_second_question(monkeypatch):
 
 # ----------------------------------------------------------- a recipe for an older BrewStart
 
-@pytest.mark.parametrize("after", [rig_page_9b, lambda: [item("salts", "NotificationStep", "")] + rig_page_9b()],
-                         ids=["strike-step-next", "a-notification-between"])
-def test_an_older_recipe_hands_over_to_its_strike_water_step(monkeypatch, after):
+def test_an_older_recipe_hands_over_to_its_strike_water_step(monkeypatch, after=rig_page_9b):
     wall = Wall(NIGHT)
     wall.install(monkeypatch)
     done = []
@@ -463,6 +461,30 @@ def test_an_older_recipe_hands_over_to_its_strike_water_step(monkeypatch, after)
     assert server.questions() == []
     following = server.step.profile[1].id         # the step the server starts next, allowed to carry on
     assert server.step.allowed.get(following) == ((READY + timedelta(hours=2)).timestamp(), NAME)
+
+
+def test_with_a_step_between_it_heats_and_holds_the_water_itself(monkeypatch):
+    """Only a strike water step right after it is handed over to: a step between might switch a pump on or move on
+    by itself. Here BrewStart heats the HLT, holds it, asks, and never moves on."""
+    wall = Wall(NIGHT)
+    wall.install(monkeypatch)
+    done = []
+    server, step = make(after=lambda: [item("salts", "NotificationStep", "")] + rig_page_9b(), done=done)
+
+    async def go():
+        await step.start()
+        await asyncio.sleep(0.03)
+        wall.at = step.target_start + timedelta(seconds=1)
+        await settle(lambda: server.kettle.auto("hlt") == (True, 152))
+        server.water(152.0)
+        await settle(lambda: server.questions())
+        wall.at = READY + timedelta(hours=3)
+        await asyncio.sleep(0.05)
+        handed = list(done)
+        await step.stop()
+        return handed
+    assert asyncio.run(go()) == [], "it moved on by itself"
+    assert server.actor.calls == []
 
 
 # ----------------------------------------------------------- the strike water helper
@@ -555,9 +577,11 @@ def test_the_status_lines_never_read_as_a_heating_start(monkeypatch):
 def test_the_new_words_are_in_german_too():
     new = ("default_mash_tun", "summary_heating", "summary_heating_late", "summary_water_ready",
            "notify_water_ready", "notify_water_late", "notify_ready_time_changed", "notify_cannot_heat",
+           "notify_start_time_changed", "notify_start_at_scheduled", "notify_start_at_reached", "summary_heating_now",
            "action_heat_now", "notify_heat_now", "notify_passed_today_heat_now", "notify_passed_heat_now",
            "notify_too_late_heat_now", "change_waiting_heat_now")
     for key in new:
         assert key in MESSAGES["en"] and key in MESSAGES["de"] and MESSAGES["de"][key] != MESSAGES["en"][key], key
-    assert MESSAGES["en"]["notify_water_ready"].format(to="Mash Tun") == \
-        "Move the strike water to the Mash Tun, then press Next"
+    assert MESSAGES["en"]["notify_water_ready"].format(to="Mash Tun", target="130.7 \u00b0F") == (
+        "Strike water hot and holding at 130.7 \u00b0F. When you've moved the strike water to the Mash Tun and "
+        "connected the hoses and pumps for recirculating, press NEXT.")

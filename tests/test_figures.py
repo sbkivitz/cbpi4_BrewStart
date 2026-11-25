@@ -280,7 +280,7 @@ def test_before_a_strike_water_step_on_the_hlt_the_plan_is_recorded_at_the_hando
 def test_start_at_records_nothing(monkeypatch):
     server, step, wall = waiting(monkeypatch, props={"Mode": "Date", "StartDate": "2026-10-24",
                                                      "StartTime": "07:00", "Timing": "Start at",
-                                                     "NotifyBefore": 0},
+                                                     "Heat_Kettle": "hlt", "Ready_Temp": 152, "NotifyBefore": 0},
                                  after=lambda: [item("mash-in", "MashInStep", "mt")])
     rows = recorded(server)
     heat_now(step, wall)

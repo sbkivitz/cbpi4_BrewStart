@@ -48,7 +48,7 @@ READY_BY = {"Mode": "Date", "StartDate": "2026-10-24", "StartTime": "07:00", "Ti
             "Heat_Kettle": "hlt", "Ready_Temp": 152, "Volume": 15, "Volume_Unit": "gal",
             "Heater_Watts": 5346, "NotifyBefore": 0}
 START_AT = {"Mode": "Date", "StartDate": "2026-10-24", "StartTime": "06:00", "Timing": "Start at",
-            "AutoNext": "Yes", "NotifyBefore": 0}
+            "Heat_Kettle": "hlt", "Ready_Temp": 152, "NotifyBefore": 0}
 
 
 class Steps:
@@ -197,8 +197,8 @@ def test_waiting_to_start_at_it_takes_a_new_time(monkeypatch):
     step, _ = waiting(monkeypatch, START_AT)
     change(step, StartTime="05:30")
     assert step.target_start == step.asked_for == REAL_DATETIME(2026, 10, 24, 5, 30)
-    assert step.cbpi.said()[0].startswith("Time changed, was Sat Oct 24, 06:00. Brew start scheduled for "
-                                          "Sat Oct 24, 05:30")
+    assert step.cbpi.said()[0].startswith("Time changed, was Sat Oct 24, 06:00. Heating starts at "
+                                          "Sat Oct 24, 05:30: the HLT heats to 152.0 °F")
 
 
 def test_a_ready_time_too_soon_for_the_heating_starts_it_now(monkeypatch):
@@ -240,12 +240,17 @@ def test_a_day_it_doesnt_offer_is_refused(monkeypatch):
     assert refused(step, Mode="Daily", StartTime="07:00") == "BrewStart's time didn't change: Unknown mode 'Daily'"
 
 
-def test_refused_once_its_time_has_come(monkeypatch):
-    step, wall = waiting(monkeypatch, dict(START_AT, AutoNext="No"))
+def test_once_a_start_at_heats_a_new_time_changes_nothing_of_the_heating(monkeypatch):
+    """Start at heats from its time and holds the water; it never hands over by itself."""
+    step, wall = waiting(monkeypatch, START_AT)
     wall.at = step.target_start + timedelta(seconds=1)
-    assert asyncio.run(step._tick(wall.at, 100000.0)) is False   # waits for Next Step
-    assert step.arrived is True
-    assert refused(step, StartTime="08:00").startswith("BrewStart's time has come (")
+    assert asyncio.run(step._tick(wall.at, 100000.0)) is False
+    assert step.heating is True and step.cbpi.kettle.auto("hlt") == (True, 152)
+    calls = list(step.cbpi.kettle.calls)
+    step.cbpi.notes.clear()
+    change(step, StartTime="08:00")
+    assert step.cbpi.kettle.calls == calls and step.heating is True and step.ready_at is None
+    assert step.cbpi.said() == ["Time changed, was Sat Oct 24, 06:00. The HLT carries on heating to 152.0 °F."]
 
 
 def test_once_it_heats_a_new_time_only_moves_the_ready_time(monkeypatch):
@@ -269,7 +274,7 @@ def test_once_it_heats_a_new_time_only_moves_the_ready_time(monkeypatch):
 
 
 def test_refused_while_it_waits_for_next_step(monkeypatch):
-    step, _ = waiting(monkeypatch, dict(START_AT, Mode="Date", StartDate="2026-10-23", StartTime="21:00"))
+    step, _ = waiting(monkeypatch, dict(START_AT, Heat_Kettle=""))   # nothing to heat: it waits for Next Step
     assert step.target_start is None
     assert refused(step, Mode="Tomorrow", StartTime="07:00") == (
         "BrewStart is waiting for Next Step, so its time can't change now: stop the brew, change it, then start it "

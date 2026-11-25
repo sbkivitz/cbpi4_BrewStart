@@ -2,10 +2,10 @@
 
 A CraftBeerPi 4 plugin with two parts:
 
-1. **`BrewStart`** – a mash step that starts the brew at a set time, or has the water hot by then.
+1. **`BrewStart`** – a mash step that heats the strike water at a set time and holds it until you press Next.
 2. **`StepStatusActor`** – a virtual actor that is ON while a matching step (a mash step, say) is running. Usable as a dependency with [cbpi4-DependentActor](https://github.com/PiBrewing/cbpi4-DependentActor).
 
-Put first in a mash profile, `BrewStart` waits until the time you set, shows a countdown, and then starts the next step by itself - or waits for you to confirm. With **Ready by** it heats the HLT itself, holds the water hot, and asks you to move the strike water to the mash tun; only your **Next** starts the next step (from 1.3.0.post1, [below](#ready-by--hot-water-at-a-set-time)).
+Put first in a mash profile, **`BrewStart` heats the strike water and holds it. It never moves on by itself: only your NEXT, once you have moved the strike water to the mash tun and connected the hoses and pumps, starts the next step.** With **Start at** the heating begins at the time you set; with **Ready by** it begins as early as it needs to for the water to be hot by then. Either way BrewStart switches nothing but the HLT's AUTO and target; the HLT pump may run with the HLT's heating, as CraftBeerPi's `HLT_PUMP_WITH_HEAT` setting says, and the mash tun's wort pump stays off until the next step starts.
 
 ## Installation
 
@@ -36,17 +36,17 @@ Not with `-e`: CraftBeerPi finds plugins with `pkgutil`, which does not see edit
 |---------|--------------|
 | **Mode** | `Today`, `Tomorrow`, or a `Date` you pick. Today and Tomorrow count from when you start the brew. Blank: Today. |
 | **StartDate** | With `Date` only: the day, picked with the browser's date picker. |
-| **StartTime** | Picked with the browser's time picker. With `Start at`, when the next step starts; with `Ready by`, when the water must be hot. |
-| **Timing** | `Start at`: the next step starts at StartTime. `Ready by`: the water reaches Ready_Temp by StartTime; the step works out when heating has to start, heats Heat_Kettle itself, holds the water and asks you to move it (below). |
+| **StartTime** | Picked with the browser's time picker. With `Start at`, when the heating begins; with `Ready by`, when the water must be hot. |
+| **Timing** | `Start at`: the HLT heats from StartTime. `Ready by`: the water reaches Ready_Temp by StartTime; the step works out when heating has to start. Either way the water is held hot until you press Next. Blank is `Ready by`. |
 | **Campden_Reminder** | `Yes`: when you save the step, a notification gives the Campden dose for Volume - 1 tablet per 20 gal / 75 L, rounded up to a quarter tablet. |
 | **NotifyBefore** | A heads-up notification this many minutes before the start - with Ready by, before heating starts. Blank: 15. `0`: none. |
-| **AutoNext** | `Start at` only. `Yes`: go on to the next step at the time, by itself. `No`: wait for you to press **Next Step** in the notification. |
+| **AutoNext** | Not asked for, and not read when an older form saved it: nothing moves BrewStart on but Next. |
 
 The date and time pickers need this fork's CraftBeerPi (4.7.7.post15 or later) and its interface (cbpi4gui 0.5.1.a3.post3 or later). On an older server the two fields are text, with the format in their description: `YYYY-MM-DD` and 24-hour `HH:MM`.
 
 ### A time that has already passed
 
-If the time you asked for is already over when you start the brew - a date left from an earlier brew, or `Today` chosen in the evening when you meant the next morning - nothing starts by itself, whatever AutoNext says. A notification says so, with a **Next Step** button to go on now - with Ready by, a **Heat now** button instead, which heats the water now: Next Step would move on to the mash tun with the water cold. To start the next day instead, stop the brew, set Mode to `Tomorrow` and start it again.
+If the time you asked for is already over when you start the brew - a date left from an earlier brew, or `Today` chosen in the evening when you meant the next morning - nothing heats by itself. A notification says so, with a **Heat now** button, which heats the water now and holds it - not Next Step, which would move on to the mash tun with the water cold. To start the next day instead, stop the brew, set Mode to `Tomorrow` and start it again.
 
 The step keeps the date and time it worked out, so a `Tomorrow` worked out again at 05:30 on brew day, after a restart, does not mean the day after. Resetting the profile forgets it.
 
@@ -64,7 +64,7 @@ POST /step2/action/<step id>
 * A ready time too soon for the heating starts the heating at once, as starting the brew would.
 * Once Ready by has begun heating (1.3.0.post1), a new time only changes the ready time: the heating carries on as it is, and the notification says so: "Time changed, was Sat Oct 24, 07:00. Ready by Sat Oct 24, 07:30: the HLT carries on heating to 152.0 °F." If the new time comes before the water is hot, BrewStart says the water is late, as for the time it replaced; after a power cut it carries on until two hours after the new time.
 * Before the brew starts, or while it is stopped, the settings are saved, and starting the brew plans from them.
-* Refused, with nothing changed: a time that has passed, a day or time that can't be read, and a step whose time has come (with Start at), that waits for **Next Step** or **Heat now**, or that has finished. Every screen is told why in an info notification, and the call answers 400 - from CraftBeerPi 4.7.7.post61 with the reason: `{"error": "action refused", "detail": "<the notification's words>"}`.
+* Refused, with nothing changed: a time that has passed, a day or time that can't be read, and a step that waits for **Next Step** or **Heat now**, or that has finished. Every screen is told why in an info notification, and the call answers 400 - from CraftBeerPi 4.7.7.post61 with the reason: `{"error": "action refused", "detail": "<the notification's words>"}`.
 
 A page can tell a BrewStart that has this action from an older one by the step types CraftBeerPi sends (`GET /step2/` and `/system/`): BrewStart's `actions` include one whose `method` is `change_time`.
 
@@ -124,8 +124,8 @@ When `SIM_TIME_SCALE` changes, CraftBeerPi (4.7.7.post63 or later) sets its cloc
 At the heating start BrewStart heats Heat_Kettle itself: it sets the kettle's target to Ready_Temp and switches its AUTO on, so the kettle's own logic heats the water and then holds it there. A ready time too soon for the heating starts it at once. Then:
 
 * Its line reads `Heating to 152.0 °F · ready by Sat Oct 24, 07:00`, and once the water reads Ready_Temp (within CraftBeerPi's 0.5 °F / 0.3 °C) `Holding 152.0 °F · move the strike water`.
-* At Ready_Temp it asks, once, from the step's name: **"Move the strike water to the Mash Tun, then press Next"**, with one button, **Next Step**. The question waits on every page, a page opened later included, until it is answered or the step stops; the phone alert plugin sends it as a question.
-* It never moves on by itself, whatever AutoNext says: only **Next Step**, or **Next** on the brew-day screen, does. Then BrewStart switches Heat_Kettle's AUTO off **before** the next step starts. On a HERMS the mash tun's logic drives the HLT's element too, and two logics must never drive one element at once. **Stop** switches it off too; **Start** heats again, or holds, without a second question.
+* At Ready_Temp it asks, once, from the step's name: **"Strike water hot and holding at 152.0 °F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT."**, with one button, **Next Step**. The question waits on every page, a page opened later included, until it is answered or the step stops; the phone alert plugin sends it as a question.
+* It never moves on by itself: only **Next Step**, or **Next** on the brew-day screen, does. Then BrewStart switches Heat_Kettle's AUTO off **before** the next step starts. On a HERMS the mash tun's logic drives the HLT's element too, and two logics must never drive one element at once. **Stop** switches it off too; **Start** heats again, or holds, without a second question.
 * If the ready time comes before the water is hot, it carries on heating and says so, with the reading: "The water isn't ready by Sat Oct 24, 07:00: the HLT reads 140.0 °F, short of 152.0 °F. …".
 * If the water stops warming - the element selector left on the boil kettle, say - it warns as a MashIn step does: "Heating is not working", with Keep waiting and Stop the profile.
 * The HLT pump runs with the HLT's AUTO as `HLT_PUMP_WITH_HEAT` says, as before. BrewStart switches no pump or element itself, the mash tun's included.
@@ -134,7 +134,7 @@ At the heating start BrewStart heats Heat_Kettle itself: it sets the kettle's ta
 
 4. Start the brew. The step waits and shows, for example,
    `Start Sat Oct 24, 06:00 · 7h 12m 05s to go`, or with Ready by `Ready Sat Oct 24, 07:00 · heating from Sat Oct 24, 06:02 · water 64.0 °F · 7h 12m 05s to go`
-5. At the time, with Start at, the next mash or boil step begins. With Ready by the water heats, and you press Next once it is in the mash tun.
+5. At the time (Start at), or early enough to be hot by it (Ready by), the HLT heats. Once the water is hot BrewStart holds it and asks; you move it to the mash tun, connect the hoses and pumps, and press Next.
 
 ### Typical profile
 
@@ -212,7 +212,7 @@ Use the **DependentActor** in the kettle and on the dashboard.
 
 - The Raspberry Pi's clock and time zone must be right (`timedatectl`).
 - The step must be **running** - the brew started. Nothing counts down while it is stopped.
-- With `AutoNext = No` a Start at stays put at the time until you press **Next Step** in the notification. A Ready by always waits for Next once the water is hot.
+- BrewStart never moves on by itself, Start at or Ready by, whatever an older form saved for AutoNext: only Next does.
 - `StepStatusActor` cannot be switched by hand; only the running step sets it.
 
 ## Development / tests
@@ -226,6 +226,7 @@ python -m pytest -q
 
 ## Changelog
 
+* **1.3.0.post7** – **BrewStart heats the strike water and holds it, and never moves on by itself.** Start at no longer starts the next step at its time: like Ready by, it heats Heat_Kettle to Ready_Temp - from its time - holds it, and asks; only Next moves on. A Timing left blank is Ready by. AutoNext is gone from the form and not read. The hand-over to a strike water step on the HLT, for a recipe made for an older BrewStart, is only to the step right after it. The question now asks for the hoses and pumps too.
 * **1.3.0.post6** – **Change settings** (`change_settings`): any of BrewStart's settings, also while it waits for its time, heats or holds the water, so Brew Day and the Brew Steps page offer them all until it has finished. Waiting, it plans again at once; heating, a new temperature moves the target, another vessel moves the heating, and Start at stops it. The water is never less than the recipe's strike water; CraftBeerPi's strike water box hears of every change at once. Refusals say what to do instead, in English and German (see [Any setting, whenever it hasn't finished](#any-setting-whenever-it-hasnt-finished)).
 * **1.3.0.post5** – The heating plan counts Heat_Kettle's own metal from its figures on CraftBeerPi's Hardware page (4.7.7.post65 or later): its empty weight at the specific heat of what it's made of, as CraftBeerPi's strike water model reads them. Without a usable figure the plan is exactly as before. When it counted the metal, the record has `brewstart.steel_j_k` too.
 * **1.3.0.post4** – A simulator's change of speed leaves the heating alone. CraftBeerPi 4.7.7.post63 sets its clock back to the computer's time whenever `SIM_TIME_SCALE` changes, and stopped, reset and started again every BrewStart, so each planned again from its settings. That took a Ready by heating or holding the HLT for one waiting for its time: Stop switched the HLT's AUTO off, reset forgot it was heating and had asked, and the water was left to cool until a second heating start, with the question asked a second time. BrewStart now handles the reset itself (`clock_moved`): heating or holding, it carries on, with its ready time worked out again from its settings; waiting, it plans again as before (see [Ready by](#ready-by--hot-water-at-a-set-time)).

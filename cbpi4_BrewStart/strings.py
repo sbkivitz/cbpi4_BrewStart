@@ -205,20 +205,26 @@ MESSAGES = {
             "Heating moved from the {old} to the {new}: the {old}'s AUTO is off, and the {new} heats to {target}, "
             "ready by {ready}."
         ),
-        "notify_heating_stopped": "BrewStart's heating stopped: the {kettle}'s AUTO is off. {message}",
-        "notify_heating_stopped_passed": (
-            "BrewStart's heating stopped: the {kettle}'s AUTO is off. {start} has passed, so nothing starts by "
-            "itself: press Next Step to go on."
+        "notify_heating_moved_now": (
+            "Heating moved from the {old} to the {new}: the {old}'s AUTO is off, and the {new} heats to {target}."
         ),
+        "notify_heating_estimate_now": (
+            "The {kettle} heats to {target}; from {water} that takes about {heat} min{efficiency}."
+        ),
+        "notify_heating_plain": "The {kettle} heats to {target}.",
         # Ready by heating its kettle itself (1.3.0.post1). The status lines never start
         # with "Start" nor say "heating from": Brew Day reads a waiting step's
         # heating start from those words.
         "default_mash_tun": "Mash Tun",
         "summary_heating": "Heating to {target} · ready by {ready}",
+        "summary_heating_now": "Heating to {target}",
         "summary_heating_late": "Heating to {target} · late for {ready}",
         "summary_water_ready": "Holding {target} · move the strike water",
         # The strike water step's own sentence on the rig page's recipe.
-        "notify_water_ready": "Move the strike water to the {to}, then press Next",
+        "notify_water_ready": (
+            "Strike water hot and holding at {target}. When you've moved the strike water to the {to} and "
+            "connected the hoses and pumps for recirculating, press NEXT."
+        ),
         "notify_water_late": (
             "The water isn't ready by {ready}: the {kettle} reads {water}, short of {target}. BrewStart "
             "carries on heating it, and asks you to move it once it's there."
@@ -226,6 +232,15 @@ MESSAGES = {
         "notify_ready_time_changed": (
             "Time changed, was {was}. Ready by {ready}: the {kettle} carries on heating to {target}."
         ),
+        "notify_start_time_changed": "Time changed, was {was}. The {kettle} carries on heating to {target}.",
+        "notify_start_at_scheduled": (
+            "Heating starts at {start}: the {kettle} heats to {target} and holds it until you press Next."
+        ),
+        "notify_start_at_reached": (
+            "Time to heat: the {kettle} heats to {target} and holds it until you press Next."
+        ),
+        "err_heat_kettle": "BrewStart needs the Kettle it heats, one that has a sensor",
+        "err_heat_temp": "BrewStart needs the Temperature to heat the water to",
         "notify_cannot_heat": (
             "BrewStart couldn't switch the {kettle}'s AUTO on, so the water isn't heating. Check the "
             "{kettle}'s logic on the Hardware page."
@@ -258,17 +273,14 @@ MESSAGES = {
         "name_heater_watts": "Element power",
         "name_campden": "Campden reminder",
         "name_notify_before": "Heads-up",
-        "name_auto_next": "Go on by itself",
         "prop_timing": (
-            "Start at: the next step begins at the time. Ready by: the water is "
-            "hot by then - BrewStart heats the kettle as early as it needs to, "
-            "holds it there and asks you to move the strike water."
+            "Start at: heating starts at the time. Ready by: hot by the time - BrewStart starts heating as "
+            "early as it needs to. Either way the water is held hot until you press Next."
         ),
         "prop_mode": "Today and Tomorrow count from when you start the brew.",
         "prop_start_date": "",
         "prop_start_time": (
-            "Start at: when the next step begins. Ready by: when the water must "
-            "be hot."
+            "Start at: when heating begins. Ready by: when the water must be hot."
         ),
         "prop_heat_kettle": (
             "The kettle with the element, holding all the strike and sparge "
@@ -291,10 +303,6 @@ MESSAGES = {
         "prop_notify_before": (
             "A notification this many minutes before the start - with Ready "
             "by, before heating starts. Blank: 15. 0: none."
-        ),
-        "prop_auto_next": (
-            "Yes: the next step begins at the time. No: it waits for you to "
-            "press Next Step."
         ),
         "prop_format_date": "Format: YYYY-MM-DD.",
         "prop_format_time": "Format: HH:MM, 24-hour.",
@@ -503,16 +511,22 @@ MESSAGES = {
             "Heizen verlegt von {old} nach {new}: AUTO von {old} ist aus, {new} heizt auf {target}, fertig bis "
             "{ready}."
         ),
-        "notify_heating_stopped": "BrewStart heizt nicht mehr: AUTO von {kettle} ist aus. {message}",
-        "notify_heating_stopped_passed": (
-            "BrewStart heizt nicht mehr: AUTO von {kettle} ist aus. {start} ist vorbei, darum startet nichts von "
-            "selbst: Next Step drücken, um weiterzumachen."
+        "notify_heating_moved_now": (
+            "Heizen verlegt von {old} nach {new}: AUTO von {old} ist aus, {new} heizt auf {target}."
         ),
+        "notify_heating_estimate_now": (
+            "{kettle} heizt auf {target}; ab {water} dauert das ca. {heat} min{efficiency}."
+        ),
+        "notify_heating_plain": "{kettle} heizt auf {target}.",
         "default_mash_tun": "Maischbottich",
         "summary_heating": "Heizt auf {target} · fertig bis {ready}",
+        "summary_heating_now": "Heizt auf {target}",
         "summary_heating_late": "Heizt auf {target} · zu spät für {ready}",
         "summary_water_ready": "Hält {target} · Maischwasser umfüllen",
-        "notify_water_ready": "Das Maischwasser in den {to} umfüllen, dann Next drücken",
+        "notify_water_ready": (
+            "Einmaischwasser heiß, gehalten auf {target}. Wenn das Einmaischwasser im {to} ist und die "
+            "Schläuche und Pumpen zum Umwälzen angeschlossen sind, NEXT drücken."
+        ),
         "notify_water_late": (
             "Das Wasser ist bis {ready} nicht fertig: {kettle} misst {water}, Ziel {target}. BrewStart "
             "heizt weiter und bittet ums Umfüllen, sobald es so weit ist."
@@ -520,6 +534,15 @@ MESSAGES = {
         "notify_ready_time_changed": (
             "Zeit geändert, vorher {was}. Fertig bis {ready}: {kettle} heizt weiter auf {target}."
         ),
+        "notify_start_time_changed": "Zeit geändert, vorher {was}. {kettle} heizt weiter auf {target}.",
+        "notify_start_at_scheduled": (
+            "Heizbeginn {start}: {kettle} heizt auf {target} und hält die Temperatur, bis Next gedrückt wird."
+        ),
+        "notify_start_at_reached": (
+            "Zeit zum Heizen: {kettle} heizt auf {target} und hält die Temperatur, bis Next gedrückt wird."
+        ),
+        "err_heat_kettle": "BrewStart braucht den Kessel, den es heizt, einen mit Sensor",
+        "err_heat_temp": "BrewStart braucht die Temperatur, auf die das Wasser heizen soll",
         "notify_cannot_heat": (
             "BrewStart konnte AUTO von {kettle} nicht einschalten, das Wasser heizt also nicht. Die Logik "
             "von {kettle} auf der Seite Hardware prüfen."
@@ -551,11 +574,9 @@ MESSAGES = {
         "name_heater_watts": "Heizleistung",
         "name_campden": "Campden-Erinnerung",
         "name_notify_before": "Vorwarnung",
-        "name_auto_next": "Selbst weiter",
         "prop_timing": (
-            "Start at: der nächste Step beginnt zur Uhrzeit. Ready by: das "
-            "Wasser ist dann heiß - BrewStart heizt den Kessel so früh wie "
-            "nötig, hält die Temperatur und bittet ums Umfüllen."
+            "Start at: das Heizen beginnt zur Uhrzeit. Ready by: zur Uhrzeit heiß - BrewStart heizt so früh "
+            "wie nötig. So oder so wird das Wasser heiß gehalten, bis Next gedrückt wird."
         ),
         "prop_mode": (
             "Today (heute) und Tomorrow (morgen) zählen ab dem Start des "
@@ -563,8 +584,7 @@ MESSAGES = {
         ),
         "prop_start_date": "",
         "prop_start_time": (
-            "Start at: wann der nächste Step beginnt. Ready by: wann das "
-            "Wasser heiß sein muss."
+            "Start at: wann das Heizen beginnt. Ready by: wann das Wasser heiß sein muss."
         ),
         "prop_heat_kettle": (
             "Der Kessel mit dem Heizstab und dem ganzen Einmaisch- und "
@@ -588,10 +608,6 @@ MESSAGES = {
         "prop_notify_before": (
             "Eine Meldung so viele Minuten vor dem Start - bei Ready by vor "
             "dem Heizbeginn. Leer: 15. 0: keine."
-        ),
-        "prop_auto_next": (
-            "Yes: der nächste Step beginnt zur Uhrzeit. No: er wartet auf Next "
-            "Step."
         ),
         "prop_format_date": "Format: JJJJ-MM-TT.",
         "prop_format_time": "Format: HH:MM, 24 Stunden.",

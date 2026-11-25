@@ -135,7 +135,7 @@ READY_BY = {"Mode": "DateTime", "StartDate": "2026-10-24 07:00", "Timing": "Read
             "Heat_Kettle": "hlt", "Ready_Temp": 152, "Volume": 15, "Volume_Unit": "gal",
             "Heater_Watts": 5346, "NotifyBefore": 0}
 START_AT = {"Mode": "DateTime", "StartDate": "2026-10-24 06:00", "Timing": "Start at",
-            "AutoNext": "Yes", "NotifyBefore": 0}
+            "Heat_Kettle": "hlt", "Ready_Temp": 152, "NotifyBefore": 0}
 
 
 def make(props, steps=None, module=bs, done=None):
@@ -288,7 +288,7 @@ def test_past_two_hours_it_never_starts_heating_by_itself(monkeypatch):
 
 def test_restarted_within_two_hours_of_ready_it_heats_at_once(monkeypatch):
     step = scenario_restarted_at(monkeypatch, READY - timedelta(minutes=20))
-    assert step.arrived and step.auto_next, step.cbpi.notes
+    assert step.arrived and step._hands_over(), step.cbpi.notes   # to the strike water step on the HLT next
     assert step.cbpi.step.allowed.get("bs") == (two_hours_after(READY), NAME)
 
 

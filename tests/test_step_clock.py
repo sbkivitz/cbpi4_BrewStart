@@ -11,6 +11,10 @@ the old countdown runs on, re-detecting the same drift every second - one
 100 s clock correction gives 24 "System clock changed" notifications, 8 "start
 time reached" and a countdown still running after the step has finished.
 
+The step here is a Start at, which heats Heat_Kettle from its time and holds
+it until the brewer's Next: "its time comes" is its heating starting, and it
+never hands over by itself.
+
 And in a simulation "the wall clock" is the simulation's: the server's one
 clock, which runs SIM_TIME_SCALE times as fast. 1.2.0.post2, fece853, reads
 the PC's clock there - planning on the PC's date and waiting real minutes for
@@ -94,8 +98,9 @@ class Cbpi:
     def __init__(self, unit="F", readings=None, kettles=None, settings=None):
         self.notes = []
         self.saves = 0
-        self.readings = readings or {}
-        kettles = kettles or {}
+        # Without a brewery given, an HLT whose water reads 60 F, for the Start at step_with builds.
+        self.readings = readings if readings is not None else {"hlt-probe": {"value": 60.0, "age": 1, "max_age": 30}}
+        kettles = kettles if kettles is not None else {"hlt": Kettle("HLT", "hlt-probe")}
         settings = dict(settings or {}, TEMP_UNIT=unit)
         self.config = types.SimpleNamespace(
             get=lambda k, default=None: settings.get(k, default))
@@ -132,7 +137,7 @@ def shifted(offset):
 
 
 def step_with(props, cbpi, done=None, module=bs):
-    base = {"Mode": "DateTime", "AutoNext": "Yes", "NotifyBefore": 0}
+    base = {"Mode": "DateTime", "Timing": "Start at", "Heat_Kettle": "hlt", "Ready_Temp": 152, "NotifyBefore": 0}
     base.update(props)
     on_done = (lambda s, r: done.append(r)) if done is not None else (lambda s, r: None)
     return module.BrewStart(cbpi, "s1", "BrewStart", base, on_done)
@@ -165,33 +170,37 @@ def test_a_clock_change_is_reported_once(monkeypatch):
     assert step.target_start == REAL_DATETIME(2026, 10, 24, 6, 0)
 
 
-def test_reaching_the_time_hands_over_once(monkeypatch):
+def test_reaching_the_time_starts_heating_once_and_never_hands_over(monkeypatch):
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
     step = step_with({"StartDate": "2026-10-23 22:00:05"}, cbpi)
 
     async def go():
         await step.on_start()
-        return [await step._tick(NIGHT + timedelta(seconds=i), 50.0 + i) for i in range(10)]
+        looks = []
+        for i in range(10):
+            looks.append((await step._tick(NIGHT + timedelta(seconds=i), 50.0 + i), step.heating))
+        return looks
 
-    handed_over = asyncio.run(go())
-    assert handed_over[:5] == [False] * 5
-    assert handed_over[5] is True
-    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+    looks = asyncio.run(go())
+    assert [handed for handed, _ in looks] == [False] * 10, "it handed over by itself"
+    assert [heating for _, heating in looks] == [False] * 5 + [True] * 5
+    assert len(cbpi.said("Time to heat")) == 1, cbpi.notes
+    assert cbpi.kettle.auto("hlt") == (True, 152.0)
 
 
-def test_autonext_no_offers_next_once_and_waits(monkeypatch):
+@pytest.mark.parametrize("auto_next", ["Yes", "No"])
+def test_autonext_saved_by_an_older_form_is_not_read(monkeypatch, auto_next):
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
-    step = step_with({"StartDate": "2026-10-23 22:00:02", "AutoNext": "No"}, cbpi)
+    step = step_with({"StartDate": "2026-10-23 22:00:02", "AutoNext": auto_next}, cbpi)
 
     async def go():
         await step.on_start()
         return [await step._tick(NIGHT + timedelta(seconds=i), 50.0 + i) for i in range(10)]
 
     assert not any(asyncio.run(go()))
-    offers = [m for m, action in cbpi.notes if action]
-    assert len(offers) == 1 and "Continue to the next step" in offers[0], cbpi.notes
+    assert step.heating is True and not [m for m, action in cbpi.notes if action], cbpi.notes
 
 
 def test_a_time_already_past_when_the_brew_starts_waits_for_next(monkeypatch):
@@ -208,9 +217,9 @@ def test_a_time_already_past_when_the_brew_starts_waits_for_next(monkeypatch):
         return [await step._tick(NIGHT + timedelta(minutes=m), 1.0 + m * 60)
                 for m in range(30)]
 
-    assert not any(asyncio.run(go()))
+    assert not any(asyncio.run(go())) and step.heating is False
     offers = [m for m, action in cbpi.notes if action]
-    assert len(offers) == 1 and "has already passed, so nothing starts by itself" in offers[0], \
+    assert len(offers) == 1 and "has already passed, so nothing heats by itself" in offers[0], \
         cbpi.notes
     assert bs.BrewStart.PLANNED_PROP not in step.props, "a moment never acted on is not kept"
 
@@ -218,7 +227,7 @@ def test_a_time_already_past_when_the_brew_starts_waits_for_next(monkeypatch):
 def test_a_configuration_error_never_starts_by_itself(monkeypatch):
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi()
-    step = step_with({"StartDate": "2026-10-24 06:00", "Timing": "Ready by"}, cbpi)
+    step = step_with({"StartDate": "2026-10-24 06:00", "Timing": "Ready by", "Heat_Kettle": ""}, cbpi)
 
     async def go():
         await step.on_start()
@@ -348,9 +357,12 @@ def run_with_clock_correction(module, monkeypatch, seconds):
         await asyncio.sleep(0.3)
         offset[0] = timedelta(seconds=118)
         await asyncio.sleep(seconds)
-        leftovers = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for task in leftovers:
-            task.cancel()
+        # The step's own loop runs on, holding the water: anything else left running is a leak.
+        leftovers = [t for t in asyncio.all_tasks()
+                     if t is not asyncio.current_task() and t is not getattr(step, "task", None)]
+        for task in leftovers + [getattr(step, "task", None)]:
+            if task is not None:
+                task.cancel()
         return len(leftovers)
 
     leftovers = asyncio.run(go())
@@ -358,18 +370,13 @@ def run_with_clock_correction(module, monkeypatch, seconds):
 
 
 def test_the_real_loop_survives_a_clock_correction(monkeypatch):
-    """And hands over with NEXT - the only result that moves a profile on.
-
-    StepController.done() acts on NEXT and ERROR and ignores DONE. The first
-    version of this rewrite returned DONE from run(); this test asserted DONE
-    too, passed, and the profile then sat on the finished step on a live
-    server. Asserting what the controller acts on is the point.
-    """
+    """Heats once at its time, says the clock changed once, never hands over, and leaves nothing running."""
     cbpi, done, leftovers = run_with_clock_correction(bs, monkeypatch, 3.5)
-    assert done == [StepResult.NEXT]
-    assert len(cbpi.said("scheduled")) == 1
+    assert StepResult.NEXT not in done, done
+    assert len(cbpi.said("Heating starts at")) == 1, cbpi.notes
     assert len(cbpi.said("System clock changed")) == 1, cbpi.notes
-    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+    assert len(cbpi.said("Time to heat")) == 1, cbpi.notes
+    assert ("on", "hlt") in cbpi.kettle.calls, cbpi.kettle.calls
     assert leftovers == 0
 
 
@@ -392,20 +399,6 @@ def test_control_the_timer_rebuild_floods_and_leaks(monkeypatch):
     cbpi, done, leftovers = run_with_clock_correction(load_control(), monkeypatch, 4.5)
     assert len(cbpi.said("System clock changed")) > 1, cbpi.notes
     assert leftovers > 0
-
-
-def test_control_returning_from_run_does_not_hand_over(monkeypatch):
-    """The first rewrite: run() returned, which reports DONE - ignored."""
-    async def returning_run(self):
-        while self.running is True:
-            if await self._tick():
-                return StepResult.DONE
-            await asyncio.sleep(self.TICK_S)
-        return StepResult.DONE
-
-    monkeypatch.setattr(bs.BrewStart, "run", returning_run)
-    cbpi, done, leftovers = run_with_clock_correction(bs, monkeypatch, 3.5)
-    assert done == [StepResult.DONE], done
 
 
 # ----------------------------------------------------------- the brewing clock
@@ -503,10 +496,11 @@ def test_control_post2_plans_on_the_pcs_date(simulation):
 def test_the_start_comes_when_the_simulations_clock_reaches_it(simulation):
     sim = simulation(HandClock(SIM_DAY))
     cbpi = Cbpi()
-    looks = look_for_an_hour(step_with(AN_HOUR_ON, cbpi), sim)
-    assert looks[:29] == [False] * 29
-    assert looks[29] is True
-    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+    step = step_with(AN_HOUR_ON, cbpi)
+    looks = look_for_an_hour(step, sim)
+    assert not any(looks), "it handed over by itself"
+    assert step.heating is True and len(cbpi.said("Time to heat")) == 1, cbpi.notes
+    assert step.asked_for == SIM_DAY + timedelta(hours=1)
     assert not cbpi.said("System clock changed"), cbpi.notes
 
 
@@ -526,23 +520,28 @@ def test_control_half_a_clock_reports_a_change_at_every_look(simulation, monkeyp
 
 
 def hand_over_at_60x(module, simulation, seconds=2.5):
-    """Start the step for real on a clock running 60x, 90 simulated seconds ahead.
+    """Start the step for real on a clock running 60x, its Start at 90 simulated seconds ahead.
 
-    Returns (result, simulated seconds after the start) for each hand-over.
+    Returns (what, simulated seconds after the start) for each time it acted: "heat" as its heating began, or the
+    result it handed over with (an older BrewStart's Start at handed over and heated nothing).
     """
     sim = simulation(clock.ScaledTimeSource(60))
     start = (REAL_DATETIME.fromtimestamp(sim.now())
              + timedelta(seconds=90)).replace(microsecond=0)
-    props = {"Mode": "DateTime", "AutoNext": "Yes", "NotifyBefore": 0,
-             "Language": "English", "StartDate": start.strftime("%Y-%m-%d %H:%M:%S")}
-    handed = []
+    props = {"Mode": "DateTime", "Timing": "Start at", "Heat_Kettle": "hlt", "Ready_Temp": 152,
+             "NotifyBefore": 0, "Language": "English", "StartDate": start.strftime("%Y-%m-%d %H:%M:%S")}
+    acted = []
     step = module.BrewStart(Cbpi(), "s1", "BrewStart", props,
-                            lambda s, r: handed.append((r, sim.now() - start.timestamp())))
+                            lambda s, r: acted.append((r, sim.now() - start.timestamp())))
 
     async def go():
         await step.start()
-        await asyncio.sleep(seconds)
-        before_cleanup = list(handed)  # cancelling a waiting step reports too
+        end = time.perf_counter() + seconds
+        while time.perf_counter() < end:
+            if getattr(step, "heating", False) and not any(what == "heat" for what, _ in acted):
+                acted.append(("heat", sim.now() - start.timestamp()))
+            await asyncio.sleep(0.005)
+        before_cleanup = list(acted)  # cancelling a waiting step reports too
         for task in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
             task.cancel()
         return before_cleanup
@@ -552,7 +551,7 @@ def hand_over_at_60x(module, simulation, seconds=2.5):
 
 def test_the_real_loop_lands_on_the_start_at_60x(simulation):
     handed = hand_over_at_60x(bs, simulation)
-    assert [r for r, _ in handed] == [StepResult.NEXT], handed
+    assert [r for r, _ in handed] == ["heat"], handed
     assert -1.5 <= handed[0][1] <= 5, f"{handed[0][1]:+.1f} simulated s from the start"
 
 
@@ -673,14 +672,14 @@ def test_only_a_clock_moved_more_than_a_minute_is_reported(monkeypatch, jump, re
     assert step.target_start == REAL_DATETIME(2026, 10, 24, 6, 0)
 
 
-def test_a_clock_stepped_past_the_start_hands_over_once(monkeypatch):
+def test_a_clock_stepped_past_the_start_starts_heating_once(monkeypatch):
     wall = WallClock(start=NIGHT, fall_back_after=None, jump=9 * 3600, jump_after=10)
     on_the_wall(monkeypatch, wall)
     cbpi = Cbpi()
     step = step_with({"StartDate": "2026-10-24 06:00"}, cbpi)
     real, shown = through_the_night(step, wall, every=1, until=20)
     assert real == 10, real
-    assert len(cbpi.said("start time reached")) == 1, cbpi.notes
+    assert len(cbpi.said("Time to heat")) == 1, cbpi.notes
 
 
 #: A step that follows a clock change with its target - the arithmetic of a

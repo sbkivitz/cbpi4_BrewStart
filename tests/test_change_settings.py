@@ -48,7 +48,7 @@ from test_heats_its_kettle import (NIGHT, READY, READY_BY, Server, Wall, heating
                                    make, settle, tick)
 from test_step_clock import Kettle  # noqa: E402
 
-START_AT = dict(READY_BY, Timing="Start at", AutoNext="Yes", StartTime="06:00")
+START_AT = dict(READY_BY, Timing="Start at", StartTime="06:00")
 #: The recipe's strike water as its import keeps it: 19.873 L, 5.25 gal.
 STRIKE_L = 5.25 * 3.785411784
 
@@ -141,8 +141,8 @@ def test_the_action_is_declared_with_every_setting_and_no_defaults():
 def test_its_words_are_in_german_too():
     keys = [k for k in MESSAGES["en"] if k.startswith("settings_") or k in (
         "action_change_settings", "notify_time_was", "notify_heating_estimate", "notify_holding",
-        "notify_heating_moved", "notify_heating_stopped", "notify_heating_stopped_passed")]
-    assert len(keys) == 23
+        "notify_heating_moved", "notify_heating_moved_now", "notify_heating_estimate_now", "notify_heating_plain")]
+    assert len(keys) == 24
     missing = [k for k in keys if k not in MESSAGES["de"]]
     assert missing == []
     assert MESSAGES["de"]["settings_too_little"] != MESSAGES["en"]["settings_too_little"]
@@ -189,25 +189,32 @@ def test_waiting_a_new_time_is_change_times_words(monkeypatch):
 
 
 def test_waiting_ready_by_to_start_at_and_back(monkeypatch):
+    """Start at heats from its time; Ready by early enough to be hot by it. Both heat and hold."""
     server, step, wall = waiting(monkeypatch)
     change(step, Timing="Start at")
     assert step.plan is None and step.ready_by is False and step.target_start == step.asked_for == READY
-    assert said(server)[-1] == "Settings changed. Brew start scheduled for Sat Oct 24, 07:00"
+    assert said(server)[-1] == ("Settings changed. Heating starts at Sat Oct 24, 07:00: the HLT heats to 152.0 \u00b0F "
+                                "and holds it until you press Next.")
     change(step, Timing="Ready by")
     assert step.plan is not None and step.target_start == step.plan.start < READY
     wall.at = step.target_start + timedelta(seconds=1)
     assert tick(step, wall) is False and server.kettle.auto("hlt") == (True, 152), "it didn't heat at its time"
 
 
-def test_waiting_start_at_then_and_heads_up_are_acted_on(monkeypatch):
+def test_waiting_start_at_heats_from_its_time_whatever_autonext_says(monkeypatch):
+    """AutoNext, which older screens send, is taken and ignored: Start at heats at its time, never before, and holds
+    the water; nothing moves it on but Next."""
     server, step, wall = waiting(monkeypatch, START_AT)
-    change(step, AutoNext="No", NotifyBefore=20)
-    assert step.auto_next is False and step.notify_before_seconds == 1200
+    change(step, AutoNext="Yes", NotifyBefore=20)
+    assert "AutoNext" not in step.props and step.notify_before_seconds == 1200
     wall.at = step.target_start - timedelta(minutes=10)
-    tick(step, wall)
-    assert said(server)[-1] == "Brew start in 10m 00s"
+    assert tick(step, wall) is False and server.kettle.calls == [], "it heated before its time"
+    assert said(server)[-1] == "Heating starts in 10m 00s"
     wall.at = step.target_start + timedelta(seconds=1)
-    assert tick(step, wall) is False and step.arrived, "Then: Wait should wait for Next Step"
+    assert tick(step, wall) is False and step.heating and server.kettle.auto("hlt") == (True, 152)
+    server.water(152.0)
+    assert tick(step, wall, 5) is False and [n.message for n in server.questions()] == ["Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT."]
+    assert tick(step, wall, 120) is False, "it moved on by itself"
 
 
 def test_waiting_too_little_time_for_more_water_starts_the_heating_now(monkeypatch):
@@ -293,7 +300,7 @@ def test_heating_a_new_vessel_moves_the_heating_old_off_first(monkeypatch):
                             "and the Boil Kettle heats to 152.0 °F, ready by Sat Oct 24, 07:00."]
     server.readings["bk-probe"]["value"] = 152.0
     tick(step, wall, 5)
-    assert [n.message for n in server.questions()] == ["Move the strike water to the Mash Tun, then press Next"]
+    assert [n.message for n in server.questions()] == ["Strike water hot and holding at 152.0 \u00b0F. When you've moved the strike water to the Mash Tun and connected the hoses and pumps for recirculating, press NEXT."]
 
 
 def test_heating_a_vessel_whose_auto_wont_go_on_is_refused_and_the_old_one_heats_again(monkeypatch):
@@ -315,31 +322,18 @@ def test_heating_a_vessel_whose_auto_wont_go_on_is_refused_and_the_old_one_heats
     assert server.notes[-1].type == NotificationType.INFO and server.strike.looks == []
 
 
-def test_heating_start_at_stops_the_heating_and_waits_for_its_time(monkeypatch):
+def test_heating_start_at_keeps_heating_and_never_moves_on(monkeypatch):
+    """Start at heats too: changing Timing while the water heats leaves the heating as it is, with no ready time to
+    be late for; nothing moves it on but Next."""
     server, step, wall = heating_with_parts(monkeypatch)
+    calls = list(server.kettle.calls)
     change(step, Timing="Start at")
-    assert server.kettle.auto("hlt")[0] is False, "BrewStart's heating didn't stop"
-    assert step.heating is False and bs.BrewStart.HEATING_PROP not in step.props
-    assert step.target_start == READY and step.ready_by is False
-    assert said(server) == ["BrewStart's heating stopped: the HLT's AUTO is off. Brew start scheduled for "
-                            "Sat Oct 24, 07:00"]
-    assert server.strike.looks[-1].get(bs.BrewStart.HEATING_PROP) is None
-    wall.at = READY - timedelta(minutes=1)
-    assert tick(step, wall) is False and server.kettle.auto("hlt")[0] is False
-    wall.at = READY + timedelta(seconds=1)
-    assert tick(step, wall) is True, "Start at, Then Move on, should go on at its time"
-
-
-def test_heating_start_at_after_its_time_waits_for_next_step(monkeypatch):
-    server, step, wall = heating_with_parts(monkeypatch)
-    wall.at = READY + timedelta(minutes=5)
-    change(step, Timing="Start at")
-    assert server.kettle.auto("hlt")[0] is False and step.target_start is None
-    last = server.notes[-1]
-    assert (last.message, last.type, last.labels()) == (
-        "BrewStart's heating stopped: the HLT's AUTO is off. Sat Oct 24, 07:00 has passed, so nothing starts by "
-        "itself: press Next Step to go on.", NotificationType.WARNING, ["Next Step"])
-    assert tick(step, wall, 10) is False, "it moved on by itself"
+    assert server.kettle.calls == calls and server.kettle.auto("hlt") == (True, 152), "the heating was touched"
+    assert step.heating is True and step.ready_at is None and step.props[bs.BrewStart.HEATING_PROP] is True
+    assert step.summary == "Heating to 152.0 °F"
+    assert said(server) == ["Settings changed. The HLT heats to 152.0 °F; from 60.0 °F that takes about 42 min."]
+    wall.at = READY + timedelta(hours=1)
+    assert tick(step, wall) is False and not server.said("isn't ready by"), "late for a ready time it hasn't got"
 
 
 # ----------------------------------------------------------- holding
@@ -372,11 +366,12 @@ def test_holding_other_settings_leave_the_question(monkeypatch):
     assert said(server) == ["Settings changed. The HLT holds the water at 152.0 °F."]
 
 
-def test_holding_start_at_takes_the_question_down_and_stops_the_heating(monkeypatch):
-    server, step, _ = held(monkeypatch)
-    change(step, Timing="")
-    assert server.step.withdrawn == [("bs", "water")] and server.kettle.auto("hlt")[0] is False
-    assert bs.BrewStart.ASKED_PROP not in step.props
+def test_holding_start_at_keeps_holding_and_asking(monkeypatch):
+    server, step, wall = held(monkeypatch)
+    change(step, Timing="Start at")
+    assert server.step.withdrawn == [] and step.asked is True and server.kettle.auto("hlt") == (True, 152)
+    assert step.props[bs.BrewStart.ASKED_PROP] is True
+    assert tick(step, wall, 60) is False, "it moved on by itself"
 
 
 # ----------------------------------------------------------- not started
@@ -463,19 +458,20 @@ def test_refused_waiting_with_nothing_changed(monkeypatch, settings, words):
 def test_refused_heating_with_the_heating_untouched(monkeypatch):
     server, step, _ = heating_with_parts(monkeypatch)
     assert refused(server, step, Heat_Kettle="", Volume=20).endswith("Ready by needs a Kettle that has a sensor")
-    assert refused(server, step, Timing="Start at", StartTime="25:99").endswith("(expected HH:MM)")
+    assert refused(server, step, Timing="Soon", StartTime="07:30").endswith("Choose Start at or Ready by.")
     assert server.kettle.auto("hlt") == (True, 152)
 
 
-def test_refused_once_a_start_at_time_has_come_except_what_doesnt_say_when(monkeypatch):
-    server, step, wall = waiting(monkeypatch, dict(START_AT, AutoNext="No", Campden_Reminder="Yes"))
+def test_a_start_at_heating_takes_a_new_time_and_heats_on(monkeypatch):
+    server, step, wall = waiting(monkeypatch, dict(START_AT, Campden_Reminder="Yes"))
     wall.at = step.target_start + timedelta(seconds=1)
-    assert tick(step, wall) is False and step.arrived
-    for settings in (dict(StartTime="08:00"), dict(Timing="Ready by"), dict(AutoNext="Yes")):
-        assert refused(server, step, **settings) == ("BrewStart's time has come (Sat Oct 24, 06:00), so when it "
-                                                     "starts can't change now: press Next Step to go on.")
+    assert tick(step, wall) is False and step.heating
+    calls = list(server.kettle.calls)
+    change(step, StartTime="08:00")
+    assert server.kettle.calls == calls and step.heating and step.asked_for.hour == 8
+    assert said(server)[-1] == "Time changed, was Sat Oct 24, 06:00. The HLT carries on heating to 152.0 °F."
     change(step, Volume=12)
-    assert step.props["Volume"] == 12.0 and said(server)[-2] == "Settings changed."
+    assert step.props["Volume"] == 12.0 and said(server)[-1].startswith("Campden:")
 
 
 def test_refused_once_it_has_finished(monkeypatch):
@@ -717,7 +713,7 @@ def at_speed(rate):
             await step.change_settings(Ready_Temp=160, Mode="Today", StartTime="07:00")
             seen.append((step.ready_at, server.kettle.auto("hlt"), step.summary))
             await step.change_settings(Timing="Start at")
-            seen.append((step.target_start, server.kettle.auto("hlt")[0]))
+            seen.append((step.asked_for, server.kettle.auto("hlt")[0], step.heating))
         asyncio.run(go())
         return seen, [n.message for n in server.notes]
     finally:
@@ -732,4 +728,4 @@ def test_the_same_at_1x_and_60x_by_the_brewing_clock():
     assert once[0][0] == tomorrow, "Tomorrow wasn't counted from the brewing clock"
     assert once[1] == (True, (True, 152.0))
     assert once[2][0] == tomorrow.replace(hour=7, minute=0) and once[2][1] == (True, 160.0)
-    assert once[3] == (tomorrow.replace(hour=7, minute=0), False)
+    assert once[3] == (tomorrow.replace(hour=7, minute=0), True, True), "Start at stopped the heating"

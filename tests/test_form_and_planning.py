@@ -54,8 +54,7 @@ def by_label(props):
 def test_the_form_asks_only_for_what_applies_when_the_hlt_heats_all_the_water():
     assert labels(bs.step_properties("en")) == [
         "Timing", "Mode", "StartDate", "StartTime", "Heat_Kettle", "Ready_Temp",
-        "Volume", "Volume_Unit", "Grain_Temp", "Heater_Watts", "Campden_Reminder", "NotifyBefore",
-        "AutoNext"]
+        "Volume", "Volume_Unit", "Grain_Temp", "Heater_Watts", "Campden_Reminder", "NotifyBefore"]
 
 
 def test_mode_offers_today_tomorrow_and_date_not_daily():
@@ -78,15 +77,13 @@ def test_a_german_form_is_german_throughout():
 
 
 def test_fields_are_shown_only_where_they_apply():
+    """Start at and Ready by both heat the water, so every heating field is always asked for; the date only for a
+    Date; and there is no "Go on by itself": only Next moves BrewStart on."""
     form = by_label(bs.step_properties("en"))
     assert form["StartDate"].show_if == {"Mode": ["Date", "DateTime"]}
-    for label in ("Heat_Kettle", "Ready_Temp", "Heater_Watts"):
-        assert form[label].show_if == {"Timing": "Ready by"}, label
-    for label in ("Volume", "Volume_Unit", "Grain_Temp"):  # shown with the water: the Campden dose needs the volume too
-        assert form[label].show_if == [{"Timing": "Ready by"}, {"Campden_Reminder": "Yes"}]
-    # AutoNext is for Start at only: Ready by heats the water and asks, and only Next moves it on.
-    assert form["AutoNext"].show_if == {"Timing": ["", "Start at"]}
-    for label in ("Mode", "StartTime", "Timing", "Campden_Reminder", "NotifyBefore"):
+    assert form["Timing"].options == ["Start at", "Ready by"]
+    assert "AutoNext" not in form
+    for label in [k for k in form if k != "StartDate"]:
         assert getattr(form[label], "show_if", None) is None, label
 
 
@@ -100,7 +97,7 @@ def test_the_server_describes_pickers_and_rules_to_the_interface():
     assert described["StartDate"]["type"] == "date"
     assert described["StartTime"]["type"] == "time"
     assert described["StartDate"]["show_if"] == {"Mode": ["Date", "DateTime"]}
-    assert described["Heat_Kettle"]["show_if"] == {"Timing": "Ready by"}
+    assert "show_if" not in described["Heat_Kettle"]
     assert "show_if" not in described["Mode"]
     assert "Format:" not in described["StartDate"]["description"]
     assert (described["StartTime"]["display_label"], described["Mode"]["display_label"]) == \
@@ -141,8 +138,7 @@ def test_every_field_is_named_in_words():
             (p.label, p.display_label)
     assert [p.display_label for p in bs.step_properties("en")] == [
         "Timing", "Day", "Date", "Time", "Kettle", "Temperature", "Water volume",
-        "Volume unit", "Grain temperature", "Element power", "Campden reminder", "Heads-up",
-        "Go on by itself"]
+        "Volume unit", "Grain temperature", "Element power", "Campden reminder", "Heads-up"]
 
 
 def test_numbers_carry_their_units():
@@ -178,19 +174,16 @@ def test_the_campden_dose_is_the_reminders_rounded_up_to_a_quarter_tablet():
 
 def test_a_new_step_starts_on_ready_by_and_the_defaults_the_step_uses_for_a_blank():
     form = by_label(bs.step_properties("en"))
-    assert {k: form[k].default_value for k in ("Timing", "Mode", "Campden_Reminder",
-                                               "AutoNext")} == \
-        {"Timing": "Ready by", "Mode": "Today", "Campden_Reminder": "No", "AutoNext": "Yes"}
+    assert {k: form[k].default_value for k in ("Timing", "Mode", "Campden_Reminder")} == \
+        {"Timing": "Ready by", "Mode": "Today", "Campden_Reminder": "No"}
 
 
-def test_a_step_saved_without_timing_still_runs_as_start_at():
-    """Steps saved before Timing existed meant Start at; the form's new default mustn't change them."""
-    step = step_with({"StartDate": "2026-10-24 06:00"}, Cbpi())
-    step._read_props()
-    assert step.ready_by is False
-    step = step_with({"StartDate": "2026-10-24 06:00", "Timing": "Ready by"}, Cbpi())
-    step._read_props()
-    assert step.ready_by is True
+def test_a_step_saved_without_timing_is_ready_by():
+    """A Timing left blank is Ready by: it heats the water and holds it, as Start at does from its time."""
+    for timing, ready_by in (("", True), (None, True), ("Ready by", True), ("Start at", False)):
+        step = step_with({"StartDate": "2026-10-24 06:00", "Timing": timing}, Cbpi())
+        step._read_props()
+        assert step.ready_by is ready_by, timing
 
 
 def test_ready_by_heats_at_its_start_whatever_autonext_says(monkeypatch):
@@ -324,7 +317,8 @@ def test_tomorrow_is_the_next_morning(monkeypatch):
     step = step_with({"Mode": "Tomorrow", "StartTime": "07:00"}, cbpi)
     asyncio.run(step.on_start())
     assert step.target_start == REAL_DATETIME(2026, 10, 24, 7, 0)
-    assert cbpi.said("Brew start scheduled for Sat Oct 24, 07:00"), cbpi.notes
+    assert cbpi.said("Heating starts at Sat Oct 24, 07:00: the HLT heats to 152.0 \u00b0F and holds it until "
+                     "you press Next."), cbpi.notes
 
 
 def test_a_date_and_time_from_the_pickers(monkeypatch):
@@ -364,7 +358,7 @@ def test_messages_follow_the_servers_language(monkeypatch):
     monkeypatch.setattr(bs, "datetime", frozen(NIGHT))
     cbpi = Cbpi(settings={"BREWSTART_LANGUAGE": "Deutsch"})
     asyncio.run(step_with({"Mode": "Tomorrow", "StartTime": "07:00"}, cbpi).on_start())
-    assert cbpi.said("Braustart geplant für 24.10.2026 07:00"), cbpi.notes
+    assert cbpi.said("Heizbeginn 24.10.2026 07:00"), cbpi.notes
 
 
 # ----------------------------------------------------------- remembering
@@ -410,14 +404,16 @@ def test_control_without_the_kept_moment_it_waits_a_day_too_long(monkeypatch):
     assert again.target_start == REAL_DATETIME(2026, 10, 25, 7, 0)
 
 
-def test_resumed_after_its_time_it_goes_on(monkeypatch):
-    """The brewer pressed Resume after the time: set up properly, so it goes on."""
+def test_resumed_after_its_time_it_heats_at_once_and_holds(monkeypatch):
+    """The brewer pressed Resume after the time: set up properly, so the water heats at once - and only Next moves
+    BrewStart on."""
     step, cbpi = started_tonight(monkeypatch, TOMORROW_7)
     late = REAL_DATETIME(2026, 10, 24, 7, 30)
     monkeypatch.setattr(bs, "datetime", frozen(late))
     again = restart(step, cbpi)
-    assert ticks(again, late, 1) == [True]
-    assert not cbpi.said("nothing starts by itself"), cbpi.notes
+    assert ticks(again, late, 3) == [False, False, False]
+    assert again.heating is True and cbpi.kettle.auto("hlt") == (True, 152.0)
+    assert not cbpi.said("nothing heats by itself"), cbpi.notes
 
 
 def test_ready_by_resumed_too_late_to_be_on_time_heats_at_once(monkeypatch):
