@@ -5,7 +5,9 @@ A CraftBeerPi 4 plugin with two parts:
 1. **`BrewStart`** – a mash step that heats the strike water at a set time and holds it until you press Next.
 2. **`StepStatusActor`** – a virtual actor that is ON while a matching step (a mash step, say) is running. Usable as a dependency with [cbpi4-DependentActor](https://github.com/PiBrewing/cbpi4-DependentActor).
 
-Put first in a mash profile, **`BrewStart` heats the strike water and holds it. It never moves on by itself: only your NEXT, once you have moved the strike water to the mash tun and connected the hoses and pumps, starts the next step.** With **Start at** the heating begins at the time you set; with **Ready by** it begins as early as it needs to for the water to be hot by then. Either way BrewStart switches nothing but the HLT's AUTO and target; the HLT pump may run with the HLT's heating, as CraftBeerPi's `HLT_PUMP_WITH_HEAT` setting says, and the mash tun's wort pump stays off until the next step starts.
+Put first in a mash profile, **`BrewStart` heats the strike water and holds it. It never moves on by itself: only your NEXT, once you have moved the strike water to the mash tun and connected the hoses and pumps, starts the next step.** With **Start at** the heating begins at the time you set; with **Ready by** it begins as early as it needs to for the water to be hot by then. Either way BrewStart switches nothing but the HLT's AUTO and target. While it heats the strike water, the HLT pump runs with the heat when CraftBeerPi's `HLT_PUMP_WITH_HEAT` setting is Yes: with this fork's CraftBeerPi (4.7.7.post94 or later) that is the one heat that runs a pump with nobody pressing anything, as nobody may be there. The mash tun's wort pump stays off; the next step asks for it.
+
+With this fork's CraftBeerPi (4.7.7.post95 or later) and a recipe imported from BeerSmith, the water's temperature, Ready_Temp, is BeerSmith's strike temperature: 157.7 °F for a recipe whose brew sheet says "Add 78.04 qt of water at 157.7 F". The recipe's MashIn then heats the moved water to a little less (155.7 °F) before it asks for the malt, because BeerSmith's figure already pays for warming the cold mash tun. See [The strike temperature](#the-strike-temperature).
 
 ## Installation
 
@@ -59,7 +61,7 @@ POST /step2/action/<step id>
 {"action": "change_time", "parameter": {"Mode": "Date", "StartDate": "2026-11-23", "StartTime": "06:30"}}
 ```
 
-* `Mode` is `Today`, `Tomorrow` or `Date`, and `StartDate` is for a `Date` only. A setting left out stays as it is. Timing and the water can't change this way: Timing can't change while the step waits, and CraftBeerPi's strike water helper changes the water's temperature.
+* `Mode` is `Today`, `Tomorrow` or `Date`, and `StartDate` is for a `Date` only. A setting left out stays as it is. Timing and the water can't change this way: Timing can't change while the step waits, and the water and its temperature change with **Change settings** (below) or Brew Day's strike water card (HLT WATER and STRIKE).
 * While the step waits, it plans again as starting the brew does: from the water as it is now, with Today and Tomorrow counted from the change. Its notification says so: "Time changed, was Sun Nov 22, 07:00. Ready by Mon Nov 23, 06:30: heating starts about …". It keeps the new moment, so after a power cut it waits for the new time.
 * A ready time too soon for the heating starts the heating at once, as starting the brew would.
 * Once Ready by has begun heating (1.3.0.post1), a new time only changes the ready time: the heating carries on as it is, and the notification says so: "Time changed, was Sat Oct 24, 07:00. Ready by Sat Oct 24, 07:30: the HLT carries on heating to 152.0 °F." If the new time comes before the water is hot, BrewStart says the water is late, as for the time it replaced; after a power cut it carries on until two hours after the new time.
@@ -80,7 +82,7 @@ POST /step2/action/<step id>
 * A setting left out stays as it is, and one sent as it is saved is no change, so a whole form may be sent. Blank (`""` or `null`) clears a setting, read as the form reads a blank: Timing Ready by, Day Today, the grain from the boil kettle's probe, a heads-up of 15 minutes. AutoNext, which BrewStart no longer has, is let through and not read.
 * Waiting, it plans again at once, as `change_time` does: the moment it planned stands unless the day or the time changed, which count from the change. More water, a hotter target, a smaller element or another vessel moves the heating start; too little time left starts the heating now.
 * Heating or holding, a new temperature moves the vessel's target at once; another vessel moves the heating - the old vessel's AUTO off first, then the new one's target and AUTO on; holding, either takes the question down and asks again once the water is there. A new time only moves the ready time. The water, its unit and the element change the estimate the notification gives. A new Timing only says whether there is a ready time to be late for: Start at and Ready by alike, the heating carries on, and only Next moves on.
-* Water less than the recipe's strike water, or that leaves the HLT less than the least water that covers its element and coil once the strike water has gone, is taken, and every screen is told once, as a warning in the strike water box's words: "Less than the 19.5 gal of mash water." or "Leaves 0.5 gal in the HLT, under its 3.0 gal minimum." The least water is the HLT's own on CraftBeerPi's Hardware page, else 15 % of its capacity there, else 3 gal (11.4 L), as CraftBeerPi counts it (4.7.7.post77 or later; an older CraftBeerPi has no least water to warn of). The box looks at BrewStart's settings again the moment they change.
+* Water less than the recipe's strike water, or that leaves the HLT less than the least water that covers its element and coil once the strike water has gone, is taken, and every screen is told once, as a warning in the strike water card's words: "Less than the 19.5 gal of mash water." or "Leaves 0.5 gal in the HLT, under its 3.0 gal minimum." The least water is the HLT's own on CraftBeerPi's Hardware page, else 15 % of its capacity there, else 3 gal (11.4 L), as CraftBeerPi counts it (4.7.7.post77 or later; an older CraftBeerPi has no least water to warn of). The card looks at BrewStart's settings again the moment they change.
 * Not started, or stopped (STOP): the settings are saved, and START plans from them. Nothing runs or heats while it is stopped; one stopped while heating goes back to heating at START, on the new vessel at the new temperature.
 * It always changes the step itself, in place, and never builds a new one: STOP always reaches the step that runs, and what the run has done - the moment it planned, the heating, the question asked - stays as it was.
 * Refused, with nothing changed, the reason in words that say what to do instead, in an info notification and the call's 400 (`{"error": "action refused", "detail": ...}`): a setting it hasn't got, a choice it doesn't offer, a number that isn't one, water at or above boiling, a vessel that isn't there, Ready by without what it needs, a time that can't be read or has passed, a new time once a Start at's time has come, a vessel whose AUTO won't go on (the old one heats on), and a step that has finished.
@@ -105,10 +107,10 @@ With `Timing = Ready by`, StartTime is when the water must be at `Ready_Temp`. T
 | Setting | What it does |
 |---------|--------------|
 | **Heat_Kettle** | The kettle with the element - the HLT, holding all the strike and sparge water. Its sensor gives the water's starting temperature, and BrewStart switches its AUTO on to heat it (1.3.0.post1). |
-| **Ready_Temp** | The temperature the water must reach by StartTime. |
-| **Volume** | All the water in Heat_Kettle, strike and sparge together. |
+| **Ready_Temp** | The temperature the water must reach by StartTime: the strike temperature. With a recipe from BeerSmith, BeerSmith's (see [The strike temperature](#the-strike-temperature)). |
+| **Volume** | All the water in Heat_Kettle, strike and sparge together. Brew Day's strike water card shows it as HLT WATER. |
 | **Volume_Unit** | `gal` or `L`. Blank: gal with °F, L with °C. |
-| **Grain_Temp** | The grain's temperature, if it spends the night somewhere other than with the boil kettle, in the brewery's unit. Blank: the boil kettle's probe. BrewStart doesn't use it itself: CraftBeerPi's strike water helper (4.7.7.post55 or later) works its forecast out from it. |
+| **Grain_Temp** | The grain's temperature, if it spends the night somewhere other than with the boil kettle, in the brewery's unit. Blank: the boil kettle's probe. BrewStart doesn't use it itself: CraftBeerPi's check of the strike (CHECK on Brew Day's strike water card, 4.7.7.post95 or later) works its forecast out from it, and GRAIN TEMP there sets it. Nothing asks where the grain spent the night. |
 | **Heater_Watts** | The element's power in watts - volts × amps, measured if you can. |
 
 The plan assumes 90 % of the element's power ends up in the water (measured on a 20 gal HLT) and adds 10 spare minutes. From 1.3.0.post3 the 90 % is CraftBeerPi's `BREWSTART_EFFICIENCY` setting when it's filled in (see [Efficiency from past brews](#efficiency-from-past-brews)); the spare minutes are not a setting. With no usable reading the step plans as if the water were at 2 °C / 35.6 °F - so heating starts early rather than late - and says so.
@@ -124,12 +126,12 @@ When `SIM_TIME_SCALE` changes, CraftBeerPi (4.7.7.post63 or later) sets its cloc
 At the heating start BrewStart heats Heat_Kettle itself: it sets the kettle's target to Ready_Temp and switches its AUTO on, so the kettle's own logic heats the water and then holds it there. A ready time too soon for the heating starts it at once. Then:
 
 * Its line reads `Heating to 152.0 °F · ready by Sat Oct 24, 07:00`, and once the water reads Ready_Temp (within CraftBeerPi's 0.5 °F / 0.3 °C) `Holding 152.0 °F · move the strike water`.
-* At Ready_Temp it asks, once, from the step's name: **"Hot at 152.0 °F. Move it to the Mash Tun, connect the hoses, then NEXT."** (the next step's vessel by its own name, the temperature in CraftBeerPi's unit), with one button, **Next Step**. The question waits on every page, a page opened later included, until it is answered or the step stops; the phone alert plugin sends it as a question.
+* At Ready_Temp it asks, once, from the step's name: **"Hot at 152.0 °F. Move it to the Mash Tun, connect the hoses, then NEXT."** (the next step's vessel by its own name, the temperature in CraftBeerPi's unit), with one button, **Next Step**. Brew Day shows it on BrewStart's row. The question waits on every page, a page opened later included, until it is answered or the step stops; the phone alert plugin sends it as a question.
 * It never moves on by itself: only **Next Step**, or **Next** on the brew-day screen, does. Then BrewStart switches Heat_Kettle's AUTO off **before** the next step starts. On a HERMS the mash tun's logic drives the HLT's element too, and two logics must never drive one element at once. **Stop** switches it off too; **Start** heats again, or holds, without a second question.
 * If the ready time comes before the water is hot, it carries on heating and says so, with the reading: "The water isn't ready by Sat Oct 24, 07:00: the HLT reads 140.0 °F, short of 152.0 °F. …".
 * If the water stops warming - the element selector left on the boil kettle, say - it warns as a MashIn step does: "Heating is not working", with Keep waiting and Stop the profile.
-* The HLT pump runs with the HLT's AUTO as `HLT_PUMP_WITH_HEAT` says, as before. BrewStart switches no pump or element itself, the mash tun's included.
-* CraftBeerPi's strike water helper (4.7.7.post61 or later) takes such a BrewStart as the strike water step: **USE** and **BACK TO** change its Ready_Temp, and while it heats or holds the HLT's target too. A question already asked is taken down, and asked again once the water reads the new temperature.
+* The HLT pump runs with the HLT's heat while CraftBeerPi's `HLT_PUMP_WITH_HEAT` is Yes, and starting a BrewStart step asks you to check the pump and its valves ("Check the HLT pump"). With this fork's CraftBeerPi (4.7.7.post94 or later) that is the only time a pump runs with nobody pressing anything: anything else heating the HLT asks for the pump instead, and an element switched on by hand neither starts it nor asks. BrewStart switches no pump or element itself, the mash tun's included.
+* Brew Day's strike water card (CraftBeerPi 4.7.7.post95 or later; its strike water helper from 4.7.7.post61) takes such a BrewStart as the strike water step: STRIKE's **SET** and **BEERSMITH'S**, and **USE** from its CHECK, change its Ready_Temp, and while it heats or holds the HLT's target too. A question already asked is taken down, and asked again once the water reads the new temperature.
 * Before a recipe made for an older BrewStart - the next step on a kettle is a MashIn on Heat_Kettle, a strike water step that heats the water and asks itself - BrewStart doesn't heat or ask: it hands over at the heating start, as before 1.3.0.post1, so the water isn't heated or asked about twice.
 
 4. Start the brew. The step waits and shows, for example,
@@ -139,13 +141,23 @@ At the heating start BrewStart heats Heat_Kettle itself: it sets the kettle's ta
 ### Typical profile
 
 ```
-BrewStart (Ready by 07:00, 152 °F: heats the HLT, holds it, asks for the strike water)
-  → MashIn on the mash tun (asks for the malt)
+BrewStart (Ready by 07:00, 157.7 °F, BeerSmith's strike: heats the HLT, holds it, asks for the strike water)
+  → MashIn on the mash tun (tops the moved water up to 155.7 °F, then asks for the malt)
   → mash steps
   → ...
 ```
 
 Set everything up in the evening, start the brew, and the strike water is hot at the time you chose.
+
+### The strike temperature
+
+With this fork's CraftBeerPi (4.7.7.post95 or later), Ready_Temp is the strike temperature, which Brew Day's strike water card shows as STRIKE:
+
+* **BeerSmith's, for a recipe imported from BeerSmith.** **ADD BREWSTART** on Brew Day fills Ready_Temp with it, and STRIKE says BEERSMITH. Importing the recipe again with **UPDATE** moves a Ready_Temp that still holds BeerSmith's old strike to the new one, and leaves any other figure alone.
+* **Yours, for any other figure:** one you SET on the card, a BrewStart saved with an older temperature, or one added on the Brew Steps page, which takes the first rest's temperature. STRIKE says YOURS, and one tap on **BEERSMITH'S** puts BeerSmith's back.
+* **The first rest's, for a recipe without BeerSmith's figures.** STRIKE says REST.
+
+BrewStart heats to Ready_Temp exactly. The recipe's MashIn on the mash tun then heats the moved water to a little less before it asks for the malt (155.7 °F for a 157.7 °F strike), worked out from BeerSmith's own figures, because BeerSmith's strike already pays for warming the cold mash tun and the HERMS warms it again. A strike set after the water has moved changes only MashIn's figure.
 
 ### Language
 
